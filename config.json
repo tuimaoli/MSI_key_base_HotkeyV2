@@ -1,0 +1,1 @@
+{"autoStart":"0","hideTray":"0","longActions":[{"command":"calc.exe","type":"run"}],"shortActions":[{"command":"notepad.exe","type":"run"},{"command":"ipconfig","type":"cmd"},{"command":"www.baidu.com","type":"url"}],"shortPressTime":"0.29999999999999999"}
