@@ -313,15 +313,22 @@ class HotkeyEngine {
             }
         }
         
-        ; 为有长按规则的键注册 UP 热键（去掉 $ 前缀，UP 不需要防递归）
+        ; 为有长按规则的键注册 UP 热键（~前缀=不吞键，$防Send递归）
         for k, _ in LongpressKeys {
-            cleanK := RegExReplace(k, "^[\$\~]+", "")
-            upKey := cleanK " Up"
+            upKey := k " Up"
             try {
                 Hotkey(upKey, this.OnKeyUp.Bind(this), "On")
                 this.ActiveUpHotkeys[upKey] := true
             } catch as err {
-                MsgBox("Error registering UP key '" upKey "':`n" err.Message)
+                ; 降级尝试：去掉 $ 前缀
+                cleanK := RegExReplace(k, "^[\$\~]+", "")
+                upKey2 := cleanK " Up"
+                try {
+                    Hotkey(upKey2, this.OnKeyUp.Bind(this), "On")
+                    this.ActiveUpHotkeys[upKey2] := true
+                } catch as err2 {
+                    MsgBox("Error registering UP key:`n" err.Message "`n" err2.Message)
+                }
             }
         }
     }
@@ -431,6 +438,11 @@ class HotkeyEngine {
 
     static DoRepeat(key, rule) {
         if (!this.KeyPresses.Has(key)) {
+            return
+        }
+        data := this.KeyPresses[key]
+        ; 兜底：如果 OnKeyUp 已经把 repeatTimer 清掉，停止执行
+        if (!data.repeatTimer) {
             return
         }
         ActionExecutor.Execute(rule)
