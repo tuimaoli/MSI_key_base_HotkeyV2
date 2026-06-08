@@ -446,7 +446,9 @@ class HotkeyEngine {
             return
         }
         ; 物理按键检测兜底：如果键已被松开，主动停掉 repeat
-        cleanKey := RegExReplace(key, "^[\$\~]+", "")
+        cleanKey := RegExReplace(key, "^[\$\~\^\!\+\#\<\>]+", "")
+        ; 对大括号封装的键名去壳 (如 {F10} -> F10)
+        cleanKey := RegExReplace(cleanKey, "^\{([^}]+)\}$", "$1")
         if (!GetKeyState(cleanKey, "P")) {
             SetTimer(data.repeatTimer, 0)
             data.repeatTimer := ""
