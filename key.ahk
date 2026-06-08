@@ -629,15 +629,31 @@ class ActionExecutor {
                         Sleep(Integer(cmd))
                     }
                 case "volumeup":
-                    step := IsInteger(cmd) ? Integer(cmd) : 2
-                    curVol := SoundGetVolume()
-                    SoundSetVolume(Min(curVol + step, 100))
+                    count := IsInteger(cmd) ? Integer(cmd) : 1
+                    Loop count {
+                        Send("{Volume_Up}")
+                        Sleep(30)
+                    }
                 case "volumedown":
-                    step := IsInteger(cmd) ? Integer(cmd) : 2
-                    curVol := SoundGetVolume()
-                    SoundSetVolume(Max(curVol - step, 0))
+                    count := IsInteger(cmd) ? Integer(cmd) : 1
+                    Loop count {
+                        Send("{Volume_Down}")
+                        Sleep(30)
+                    }
                 case "volumemute":
-                    SoundSetMute(-1)
+                    Send("{Volume_Mute}")
+                case "brightnessup":
+                    count := IsInteger(cmd) ? Integer(cmd) : 1
+                    Loop count {
+                        Send("{Brightness_Up}")
+                        Sleep(30)
+                    }
+                case "brightnessdown":
+                    count := IsInteger(cmd) ? Integer(cmd) : 1
+                    Loop count {
+                        Send("{Brightness_Down}")
+                        Sleep(30)
+                    }
                 case "lockscreen":
                     DllCall("user32\LockWorkStation")
                 case "screenshot":
@@ -1050,7 +1066,7 @@ class UIManager {
 
         editGui.Add("GroupBox", "x15 y255 w590 h320", I18n.T("ActGroup"))
         
-        typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay", "VolumeUp", "VolumeDown", "VolumeMute", "LockScreen", "Screenshot", "Sleep", "Shutdown"]
+        typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay", "VolumeUp", "VolumeDown", "VolumeMute", "BrightnessUp", "BrightnessDown", "LockScreen", "Screenshot", "Sleep", "Shutdown"]
         displayTypes := []
         for t in typeMap {
             displayTypes.Push(I18n.T("Act_" t))
@@ -1331,6 +1347,7 @@ class I18n {
             "Act_Run", "Run Program", "Act_URL", "Open URL", "Act_CMD", "Command Line",
             "Act_Send", "Send Text", "Act_Paste", "Fast Paste", "Act_KeyCombo", "Key Combo", "Act_Delay", "Delay(ms)",
             "Act_VolumeUp", "Volume Up", "Act_VolumeDown", "Volume Down", "Act_VolumeMute", "Volume Mute",
+            "Act_BrightnessUp", "Brightness Up", "Act_BrightnessDown", "Brightness Down",
             "Act_LockScreen", "Lock Screen", "Act_Screenshot", "Screenshot", "Act_Sleep", "Sleep", "Act_Shutdown", "Shutdown",
             "MsgEmptyCmd", "Empty command.", "MsgSelectToUpdate", "Select action first.",
             "MsgEmptyKey", "Key cannot be empty.", "TrayShow", "Dashboard", "TrayPause", "Pause Hotkeys",
@@ -1379,6 +1396,7 @@ class I18n {
             "Act_Run", "运行程序 (Run)", "Act_URL", "打开网址 (URL)", "Act_CMD", "命令行 (CMD)",
             "Act_Send", "发送文本 (Send)", "Act_Paste", "极速粘贴 (Paste)", "Act_KeyCombo", "发送组合键 (Combo)", "Act_Delay", "延时等待 (Delay)",
             "Act_VolumeUp", "音量+", "Act_VolumeDown", "音量-", "Act_VolumeMute", "静音切换",
+            "Act_BrightnessUp", "亮度+", "Act_BrightnessDown", "亮度-",
             "Act_LockScreen", "锁屏", "Act_Screenshot", "截图", "Act_Sleep", "休眠", "Act_Shutdown", "关机",
             "MsgEmptyCmd", "内容不可为空。", "MsgSelectToUpdate", "请先在列表中选中项。",
             "MsgEmptyKey", "触发键不可为空。", "TrayShow", "打开控制台", "TrayPause", "挂起快捷键",
