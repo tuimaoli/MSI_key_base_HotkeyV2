@@ -38,6 +38,9 @@ class AppCore {
         }
         A_TrayMenu.Add(I18n.T("LangSwitch"), (*) => UIManager.SwitchLanguage())
         A_TrayMenu.Add() ; 分隔线
+        A_TrayMenu.Add(I18n.T("ExportConfig"), (*) => ConfigManager.Export())
+        A_TrayMenu.Add(I18n.T("ImportConfig"), (*) => ConfigManager.Import())
+        A_TrayMenu.Add() ; 分隔线
         A_TrayMenu.Add(I18n.T("TrayPause"), (*) => this.ToggleSuspend())
         A_TrayMenu.Add(I18n.T("TrayExit"), (*) => ExitApp())
         
@@ -135,6 +138,66 @@ class ConfigManager {
             if (FileExist(shortcutPath)) {
                 FileDelete(shortcutPath)
             }
+        }
+    }
+
+    static Export() {
+        savePath := FileSelect("S16", "HotkeyV2_Backup.json", I18n.T("ExportTitle"), "JSON (*.json)")
+        if (savePath = "") {
+            return
+        }
+        try {
+            configObj := Map()
+            configObj["runOnStartup"] := this.RunOnStartup
+            configObj["language"] := this.AppLang
+            configObj["rules"] := this.Rules
+            FileOpen(savePath, "w").Write(JSON.Dump(configObj, "    "))
+            MsgBox(I18n.T("ExportSuccess") "`n" savePath)
+        } catch as err {
+            MsgBox(I18n.T("ExportFail") "`n" err.Message)
+        }
+    }
+
+    static Import() {
+        openPath := FileSelect(1, "", I18n.T("ImportTitle"), "JSON (*.json)")
+        if (openPath = "") {
+            return
+        }
+        try {
+            text := FileRead(openPath)
+            loadedData := JSON.Load(text)
+            importRules := loadedData.Has("rules") ? loadedData["rules"] : (loadedData is Array ? loadedData : [])
+            
+            if (importRules.Length == 0) {
+                MsgBox(I18n.T("ImportEmpty"))
+                return
+            }
+            
+            result := MsgBox(I18n.T("ImportMergePrompt") " (" importRules.Length " " I18n.T("ImportRulesCount") ")", I18n.T("ImportTitle"), 0x3)
+            if (result == "Yes") {
+                ; 合并：追加不冲突的规则
+                for newRule in importRules {
+                    dup := false
+                    for existRule in this.Rules {
+                        if (existRule["key"] == newRule["key"] && existRule.Has("triggerType") && newRule.Has("triggerType") && existRule["triggerType"] == newRule["triggerType"]) {
+                            dup := true
+                            break
+                        }
+                    }
+                    if (!dup) {
+                        this.Rules.Push(newRule)
+                    }
+                }
+            } else if (result == "No") {
+                ; 替换
+                this.Rules := importRules
+            } else {
+                return
+            }
+            this.Save()
+            MsgBox(I18n.T("ImportSuccess"))
+        } catch as err {
+            MsgBox(I18n.T("ImportFail") "`n" err.Message)
         }
     }
 }
@@ -909,7 +972,14 @@ class I18n {
             "TrayExit", "Exit", "ExecFeedback", "Executing: ", "PressKey", "Press Key...",
             "CaptureModeTitle", "--- Window Capture Mode ---",
             "CaptureModeHover", "Target: ",
-            "EnableThisGroup", "Enable Group", "DisableThisGroup", "Disable Group"
+            "EnableThisGroup", "Enable Group", "DisableThisGroup", "Disable Group",
+            "ExportConfig", "Export Config", "ImportConfig", "Import Config",
+            "ExportTitle", "Export Config", "ImportTitle", "Import Config",
+            "ExportSuccess", "Config exported to:", "ExportFail", "Export failed:",
+            "ImportEmpty", "No valid rules found in file.",
+            "ImportMergePrompt", "Merge (Yes) or Replace (No)?",
+            "ImportRulesCount", "rules",
+            "ImportSuccess", "Config imported and saved.", "ImportFail", "Import failed:"
         ),
         "zh", Map(
             "Title", "快捷键管理器 V2.5 (极简版)",
@@ -933,7 +1003,14 @@ class I18n {
             "TrayExit", "退出程序", "ExecFeedback", "正在执行动作：", "PressKey", "请按键...",
             "CaptureModeTitle", "【 窗口捕获模式 】`n[左键] 选定目标`n[右键 / Esc] 取消捕获`n",
             "CaptureModeHover", "当前指向: ",
-            "EnableThisGroup", "使能当前分组", "DisableThisGroup", "失能当前分组"
+            "EnableThisGroup", "使能当前分组", "DisableThisGroup", "失能当前分组",
+            "ExportConfig", "导出配置", "ImportConfig", "导入配置",
+            "ExportTitle", "导出配置", "ImportTitle", "导入配置",
+            "ExportSuccess", "配置已导出到:", "ExportFail", "导出失败:",
+            "ImportEmpty", "文件中未找到有效规则。",
+            "ImportMergePrompt", "合并(是) 还是 替换(否)?",
+            "ImportRulesCount", "条规则",
+            "ImportSuccess", "配置已导入并保存。", "ImportFail", "导入失败:"
         )
     )
 
