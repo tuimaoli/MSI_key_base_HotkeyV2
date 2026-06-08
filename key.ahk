@@ -605,6 +605,24 @@ class ActionExecutor {
         }
     }
 
+    static BrightnessWMI(delta) {
+        try {
+            wmi := ComObject("WbemScripting.SWbemLocator").ConnectServer(".", "root/wmi")
+            monitors := wmi.ExecQuery("SELECT * FROM WmiMonitorBrightnessMethods")
+            for mon in monitors {
+                cur := mon.CurrentBrightness
+                new := cur + delta
+                if (new < 0) {
+                    new := 0
+                }
+                if (new > 100) {
+                    new := 100
+                }
+                mon.WmiSetBrightness(1, new)
+            }
+        }
+    }
+
     static Dispatch(actType, cmd) {
         try {
             switch actType {
@@ -646,17 +664,11 @@ class ActionExecutor {
                 case "volumemute":
                     Send("{Volume_Mute}")
                 case "brightnessup":
-                    count := IsInteger(cmd) ? Integer(cmd) : 1
-                    Loop count {
-                        Send("{Brightness_Up}")
-                        Sleep(30)
-                    }
+                    step := IsInteger(cmd) ? Integer(cmd) : 10
+                    this.BrightnessWMI(step)
                 case "brightnessdown":
-                    count := IsInteger(cmd) ? Integer(cmd) : 1
-                    Loop count {
-                        Send("{Brightness_Down}")
-                        Sleep(30)
-                    }
+                    step := IsInteger(cmd) ? Integer(cmd) : 10
+                    this.BrightnessWMI(-step)
                 case "lockscreen":
                     DllCall("user32\LockWorkStation")
                 case "screenshot":
