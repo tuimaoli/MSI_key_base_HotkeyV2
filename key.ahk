@@ -313,12 +313,15 @@ class HotkeyEngine {
             }
         }
         
-        ; 为有长按规则的键注册 UP 热键
+        ; 为有长按规则的键注册 UP 热键（去掉 $ 前缀，UP 不需要防递归）
         for k, _ in LongpressKeys {
-            upKey := k " Up"
+            cleanK := RegExReplace(k, "^[\$\~]+", "")
+            upKey := cleanK " Up"
             try {
                 Hotkey(upKey, this.OnKeyUp.Bind(this), "On")
                 this.ActiveUpHotkeys[upKey] := true
+            } catch as err {
+                MsgBox("Error registering UP key '" upKey "':`n" err.Message)
             }
         }
     }
@@ -434,11 +437,14 @@ class HotkeyEngine {
     }
 
     static OnKeyUp(ThisHotkey) {
-        ; 将 UP 热键名转回 DOWN 热键名: "$F10 Up" -> "$F10"
+        ; 将 UP 热键名转回 DOWN 热键名: "F10 Up" -> "$F10"
         downKey := RegExReplace(ThisHotkey, "\s+Up$", "")
-        
+        ; KeyPresses 中的 key 可能带 $ 前缀，尝试匹配
         if (!this.KeyPresses.Has(downKey)) {
-            return
+            downKey := "$" downKey
+            if (!this.KeyPresses.Has(downKey)) {
+                return
+            }
         }
         
         data := this.KeyPresses[downKey]
