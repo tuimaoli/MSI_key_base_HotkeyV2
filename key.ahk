@@ -233,6 +233,7 @@ class ConfigManager {
     }
 
     static CheckProcesses() {
+        changed := false
         for pg in this.ProcessGroups {
             if (!pg.Has("exe") || !pg.Has("group") || pg["exe"] = "" || pg["group"] = "") {
                 continue
@@ -244,19 +245,21 @@ class ConfigManager {
             for rule in this.Rules {
                 ruleGroup := rule.Has("group") ? rule["group"] : "Default"
                 if (ruleGroup == pg["group"]) {
-                    if (isRunning && shouldEnable) {
-                        rule["enabled"] := true
-                    } else if (!isRunning) {
-                        rule["enabled"] := false
+                    targetState := (isRunning && shouldEnable) ? true : false
+                    if (rule["enabled"] != targetState) {
+                        rule["enabled"] := targetState
+                        changed := true
                     }
                 }
             }
         }
         
-        ; 重新应用热键
-        HotkeyEngine.ApplyAll(this.Rules)
-        if (UIManager.lvRules) {
-            UIManager.UpdateMainListView()
+        ; 仅在规则实际变化时才重建热键和刷新列表
+        if (changed) {
+            HotkeyEngine.ApplyAll(this.Rules)
+            if (UIManager.lvRules) {
+                UIManager.UpdateMainListView()
+            }
         }
     }
 }
