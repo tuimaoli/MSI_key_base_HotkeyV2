@@ -25,6 +25,7 @@ class AppCore {
         this.BuildTrayMenu()
         UIManager.BuildMain()
         HotkeyEngine.ApplyAll(ConfigManager.Rules)
+        ConfigManager.StartProcessMonitor()
     }
 
     static BuildTrayMenu() {
@@ -40,6 +41,7 @@ class AppCore {
         A_TrayMenu.Add() ; 分隔线
         A_TrayMenu.Add(I18n.T("ExportConfig"), (*) => ConfigManager.Export())
         A_TrayMenu.Add(I18n.T("ImportConfig"), (*) => ConfigManager.Import())
+        A_TrayMenu.Add(I18n.T("ProcessGroupsMenu"), (*) => UIManager.ShowProcessGroups())
         A_TrayMenu.Add() ; 分隔线
         A_TrayMenu.Add(I18n.T("TrayPause"), (*) => this.ToggleSuspend())
         A_TrayMenu.Add(I18n.T("TrayExit"), (*) => ExitApp())
@@ -65,7 +67,8 @@ class ConfigManager {
     static FilePath := "config.json"
     static Rules := []
     static RunOnStartup := false
-    static AppLang := "zh" 
+    static AppLang := "zh"
+    static ProcessGroups := [] 
 
     static Load() {
         if (!FileExist(this.FilePath)) {
@@ -82,6 +85,7 @@ class ConfigManager {
                 this.Rules := loadedData.Has("rules") ? loadedData["rules"] : []
                 this.RunOnStartup := loadedData.Has("runOnStartup") ? loadedData["runOnStartup"] : false
                 this.AppLang := loadedData.Has("language") ? loadedData["language"] : "zh"
+                this.ProcessGroups := loadedData.Has("processGroups") ? loadedData["processGroups"] : []
             }
 
             for rule in this.Rules {
@@ -122,6 +126,7 @@ class ConfigManager {
             configObj["runOnStartup"] := this.RunOnStartup
             configObj["language"] := this.AppLang
             configObj["rules"] := this.Rules
+            configObj["processGroups"] := this.ProcessGroups
 
             FileOpen(this.FilePath, "w").Write(JSON.Dump(configObj, "    "))
             this.ManageStartupShortcut(this.RunOnStartup)
@@ -204,6 +209,38 @@ class ConfigManager {
             MsgBox(I18n.T("ImportSuccess"))
         } catch as err {
             MsgBox(I18n.T("ImportFail") "`n" err.Message)
+        }
+    }
+
+    static StartProcessMonitor() {
+        SetTimer(this.CheckProcesses.Bind(this), 2000)
+    }
+
+    static CheckProcesses() {
+        for pg in this.ProcessGroups {
+            if (!pg.Has("exe") || !pg.Has("group") || pg["exe"] = "" || pg["group"] = "") {
+                continue
+            }
+            isRunning := ProcessExist(pg["exe"]) ? true : false
+            shouldEnable := pg.Has("enabled") ? pg["enabled"] : true
+            
+            ; 切换该分组下所有规则的启用状态
+            for rule in this.Rules {
+                ruleGroup := rule.Has("group") ? rule["group"] : "Default"
+                if (ruleGroup == pg["group"]) {
+                    if (isRunning && shouldEnable) {
+                        rule["enabled"] := true
+                    } else if (!isRunning) {
+                        rule["enabled"] := false
+                    }
+                }
+            }
+        }
+        
+        ; 重新应用热键
+        HotkeyEngine.ApplyAll(this.Rules)
+        if (UIManager.lvRules) {
+            UIManager.UpdateMainListView()
         }
     }
 }
@@ -779,6 +816,71 @@ class UIManager {
         Reload()
     }
 
+    static ShowProcessGroups() {
+        pgGui := Gui("+Owner", I18n.T("ProcessGroupsTitle"))
+        pgGui.SetFont("s9", "Segoe UI")
+        pgGui.OnEvent("Close", (*) => pgGui.Destroy())
+        
+        pgGui.Add("Text", "x15 y15 w500", I18n.T("ProcessGroupsDesc"))
+        
+        lvPG := pgGui.Add("ListView", "x15 y45 w500 h200 Grid", [I18n.T("ProcessExe"), I18n.T("ProcessGroup"), I18n.T("ProcessEnabled")])
+        lvPG.ModifyCol(1, 180)
+        lvPG.ModifyCol(2, 180)
+        lvPG.ModifyCol(3, 110)
+        
+        for pg in ConfigManager.ProcessGroups {
+            exeName := pg.Has("exe") ? pg["exe"] : ""
+            groupName := pg.Has("group") ? pg["group"] : ""
+            enabled := pg.Has("enabled") ? pg["enabled"] : true
+            lvPG.Add(, exeName, groupName, enabled ? I18n.T("Yes") : I18n.T("No"))
+        }
+        
+        pgGui.Add("Text", "x15 y260 w60", I18n.T("ProcessExe") ":")
+        edExe := pgGui.Add("Edit", "x80 y257 w150", "")
+        pgGui.Add("Text", "x240 y260 w60", I18n.T("ProcessGroup") ":")
+        edGroup := pgGui.Add("Edit", "x305 y257 w100", "")
+        cbEnabled := pgGui.Add("CheckBox", "x420 y258 w60", I18n.T("ProcessEnabled"))
+        cbEnabled.Value := 1
+        
+        btnAddPG := pgGui.Add("Button", "x15 y295 w80", I18n.T("BtnAdd"))
+        btnAddPG.OnEvent("Click", (*) => AddPG())
+        AddPG() {
+            exeVal := edExe.Value
+            groupVal := edGroup.Value
+            if (exeVal = "" || groupVal = "") {
+                return
+            }
+            newPG := Map("exe", exeVal, "group", groupVal, "enabled", cbEnabled.Value ? true : false)
+            ConfigManager.ProcessGroups.Push(newPG)
+            ConfigManager.Save()
+            lvPG.Add(, exeVal, groupVal, cbEnabled.Value ? I18n.T("Yes") : I18n.T("No"))
+            edExe.Value := ""
+            edGroup.Value := ""
+        }
+        
+        lvPG.OnEvent("ContextMenu", LvPGContextMenu)
+        LvPGContextMenu(ctrl, item, isRight, x, y) {
+            if (item == 0) {
+                return
+            }
+            ctx := Menu()
+            ctx.Add(I18n.T("DeleteRule"), (*) => DelPG(item))
+            ctx.Show()
+        }
+        DelPG(idx) {
+            ConfigManager.ProcessGroups.RemoveAt(idx)
+            ConfigManager.Save()
+            lvPG.Delete(idx)
+            ; 恢复被该分组禁用的规则
+            for rule in ConfigManager.Rules {
+                rule["enabled"] := true
+            }
+            ConfigManager.Save()
+        }
+        
+        pgGui.Show("AutoSize")
+    }
+
     static ShowEditRule(existingRule := "", ruleIndex := 0) {
         wasSuspended := A_IsSuspended
         Suspend(true)
@@ -1013,7 +1115,12 @@ class I18n {
             "ImportEmpty", "No valid rules found in file.",
             "ImportMergePrompt", "Merge (Yes) or Replace (No)?",
             "ImportRulesCount", "rules",
-            "ImportSuccess", "Config imported and saved.", "ImportFail", "Import failed:"
+            "ImportSuccess", "Config imported and saved.", "ImportFail", "Import failed:",
+            "ProcessGroupsMenu", "Process Monitor",
+            "ProcessGroupsTitle", "Process-Aware Groups",
+            "ProcessGroupsDesc", "When a process is running, its linked rule group will be auto-enabled.",
+            "ProcessExe", "Process (exe)", "ProcessGroup", "Group", "ProcessEnabled", "Active",
+            "Yes", "Yes", "No", "No"
         ),
         "zh", Map(
             "Title", "快捷键管理器 V2.5 (极简版)",
@@ -1045,7 +1152,12 @@ class I18n {
             "ImportEmpty", "文件中未找到有效规则。",
             "ImportMergePrompt", "合并(是) 还是 替换(否)?",
             "ImportRulesCount", "条规则",
-            "ImportSuccess", "配置已导入并保存。", "ImportFail", "导入失败:"
+            "ImportSuccess", "配置已导入并保存。", "ImportFail", "导入失败:",
+            "ProcessGroupsMenu", "进程感知",
+            "ProcessGroupsTitle", "进程感知分组",
+            "ProcessGroupsDesc", "当指定进程运行时，自动启用关联的规则分组。",
+            "ProcessExe", "进程名(exe)", "ProcessGroup", "分组", "ProcessEnabled", "启用",
+            "Yes", "是", "No", "否"
         )
     )
 
