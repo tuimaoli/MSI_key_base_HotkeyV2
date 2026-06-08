@@ -77,7 +77,7 @@
         {
             "actions": [
                 {
-                    "command": 111,
+                    "command": "110.40.169.227",
                     "type": "Send"
                 }
             ],
@@ -90,5 +90,5 @@
             "window": ""
         }
     ],
-    "runOnStartup": 0
+    "runOnStartup": 1
 }

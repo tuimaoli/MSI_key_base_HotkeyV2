@@ -94,12 +94,6 @@ class ConfigManager {
                 if (!rule.Has("enabled")) {
                     rule["enabled"] := true
                 }
-                if (!rule.Has("triggerType")) {
-                    rule["triggerType"] := "click"
-                }
-                if (!rule.Has("holdTime")) {
-                    rule["holdTime"] := 500
-                }
             }
         } catch as err {
             MsgBox("Error loading config.json:`n" err.Message)
@@ -144,7 +138,6 @@ class ConfigManager {
 ; ==============================================================================
 class HotkeyEngine {
     static ActiveHotkeys := Map()
-    static ActiveUpHotkeys := Map()
     static KeyPresses := Map()
 
     static ApplyAll(rules) {
@@ -153,13 +146,8 @@ class HotkeyEngine {
             try Hotkey(keyName, "Off")
         }
         this.ActiveHotkeys.Clear()
-        for keyName, _ in this.ActiveUpHotkeys {
-            try Hotkey(keyName, "Off")
-        }
-        this.ActiveUpHotkeys.Clear()
 
         KeyMap := Map()
-        LongpressKeys := Map()
         for rule in rules {
             if (!rule.Has("key") || rule["key"] = "" || !rule["enabled"]) {
                 continue
@@ -174,14 +162,9 @@ class HotkeyEngine {
                 KeyMap[hookKey] := []
             }
             KeyMap[hookKey].Push(rule)
-            
-            ; 记录哪些键有长按规则，以便注册 UP 热键
-            if (rule.Has("triggerType") && rule["triggerType"] == "longpress") {
-                LongpressKeys[hookKey] := true
-            }
         }
 
-        ; 重新注册 DOWN 热键
+        ; 重新注册
         for k, _ in KeyMap {
             try {
                 Hotkey(k, this.OnTrigger.Bind(this), "On")
@@ -190,32 +173,18 @@ class HotkeyEngine {
                 MsgBox("Error registering key '" k "':`n" err.Message)
             }
         }
-        
-        ; 为有长按规则的键注册 UP 热键
-        for k, _ in LongpressKeys {
-            upKey := k " Up"
-            try {
-                Hotkey(upKey, this.OnKeyUp.Bind(this), "On")
-                this.ActiveUpHotkeys[upKey] := true
-            }
-        }
     }
 
     static OnTrigger(ThisHotkey) {
         if (!this.KeyPresses.Has(ThisHotkey)) {
-            this.KeyPresses[ThisHotkey] := {count: 0, timerFn: "", holdTimers: [], consumed: false, clickMatched: false, clickUnmatched: false}
+            this.KeyPresses[ThisHotkey] := {count: 0, timerFn: ""}
         }
         
         data := this.KeyPresses[ThisHotkey]
         data.count += 1
-        data.consumed := false
-        data.clickMatched := false
-        data.clickUnmatched := false
-        
         maxTimeout := 0
         maxRuleCount := 1
-        clickRules := []
-        longpressRules := []
+        relevantRules := []
         
         ; 剥离前缀：比对配置时，忽略底层强加的钩子符号
         cleanThis := RegExReplace(ThisHotkey, "^[\$\~]+", "")
@@ -233,19 +202,13 @@ class HotkeyEngine {
                         continue
                     }
                 }
-                triggerType := rule.Has("triggerType") ? rule["triggerType"] : "click"
-                
-                if (triggerType == "longpress") {
-                    longpressRules.Push(rule)
-                } else {
-                    clickRules.Push(rule)
-                    if (rule.Has("timeout") && rule["timeout"] > maxTimeout) {
-                        maxTimeout := rule["timeout"]
-                    }
-                    ruleCount := rule.Has("count") ? rule["count"] : 1
-                    if (ruleCount > maxRuleCount) {
-                        maxRuleCount := ruleCount
-                    }
+                relevantRules.Push(rule)
+                if (rule.Has("timeout") && rule["timeout"] > maxTimeout) {
+                    maxTimeout := rule["timeout"]
+                }
+                ruleCount := rule.Has("count") ? rule["count"] : 1
+                if (ruleCount > maxRuleCount) {
+                    maxRuleCount := ruleCount
                 }
             }
         }

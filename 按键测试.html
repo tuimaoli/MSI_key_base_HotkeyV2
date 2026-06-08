@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h1>按键测试</h1>
+<p>按下按钮，看控制台或这里输出</p>
+<script>
+document.addEventListener('keydown', function(event) {
+  console.log('Key: ' + event.key + ', Code: ' + event.code + ', KeyCode: ' + event.keyCode + ', Which: ' + event.which);
+  document.body.innerHTML += '<p>Key: ' + event.key + ', Code: ' + event.code + ', KeyCode: ' + event.keyCode + ', Which: ' + event.which + '</p>';
+});
+</script>
+</body>
+</html>

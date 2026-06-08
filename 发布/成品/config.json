@@ -8,23 +8,7 @@
                     "type": "URL"
                 },
                 {
-                    "command": "http://www.51hei.com/bbs/",
-                    "type": "URL"
-                },
-                {
-                    "command": "https://makelog.dfrobot.com.cn/",
-                    "type": "URL"
-                },
-                {
                     "command": "https://oshwhub.com/sign_in",
-                    "type": "URL"
-                },
-                {
-                    "command": "https://mc.dfrobot.com.cn/",
-                    "type": "URL"
-                },
-                {
-                    "command": "https://activity.jlc.com/",
                     "type": "URL"
                 },
                 {
@@ -33,17 +17,17 @@
                 }
             ],
             "count": 2,
-            "desc": "Ö´ÐÐÇ©µ½ÍøÒ³",
+            "desc": "Ë«»÷Ö´ÐÐÇ©µ½ÍøÒ³",
             "enabled": 1,
             "group": "Á´½ÓÀà",
-            "key": "sc10A",
+            "key": "F1",
             "timeout": 500,
             "window": ""
         },
         {
             "actions": [
                 {
-                    "command": "ping 172.16.10.1",
+                    "command": "ping 192.168.144.1",
                     "type": "CMD"
                 },
                 {
@@ -62,12 +46,12 @@
         {
             "actions": [
                 {
-                    "command": "@",
+                    "command": "Ð»Ð»@Thanks£¡",
                     "type": "Send"
                 }
             ],
             "count": 2,
-            "desc": "",
+            "desc": "Ë«»÷ÈÈÐÄ»Ø¸´",
             "enabled": 1,
             "group": "Default",
             "key": "F4",
@@ -77,18 +61,18 @@
         {
             "actions": [
                 {
-                    "command": 111,
-                    "type": "Send"
+                    "command": "Alt + a",
+                    "type": "KeyCombo"
                 }
             ],
-            "count": 3,
-            "desc": "",
+            "count": 1,
+            "desc": "Î¢ÐÅ½ØÍ¼¿ì½Ý¼ü¸´ÓÃ",
             "enabled": 1,
             "group": "Default",
-            "key": "NumpadMult",
+            "key": "F3",
             "timeout": 300,
             "window": ""
         }
     ],
-    "runOnStartup": 0
+    "runOnStartup": 1
 }
