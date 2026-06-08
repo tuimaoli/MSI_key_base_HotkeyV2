@@ -445,6 +445,13 @@ class HotkeyEngine {
         if (!data.repeatTimer) {
             return
         }
+        ; 物理按键检测兜底：如果键已被松开，主动停掉 repeat
+        cleanKey := RegExReplace(key, "^[\$\~]+", "")
+        if (!GetKeyState(cleanKey, "P")) {
+            SetTimer(data.repeatTimer, 0)
+            data.repeatTimer := ""
+            return
+        }
         ActionExecutor.Execute(rule)
     }
 
