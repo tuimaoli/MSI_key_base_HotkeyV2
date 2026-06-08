@@ -603,12 +603,14 @@ class ActionExecutor {
                     }
                 case "volumeup":
                     step := IsInteger(cmd) ? Integer(cmd) : 2
-                    SoundSet("+" step)
+                    curVol := SoundGetVolume()
+                    SoundSetVolume(Min(curVol + step, 100))
                 case "volumedown":
                     step := IsInteger(cmd) ? Integer(cmd) : 2
-                    SoundSet("-" step)
+                    curVol := SoundGetVolume()
+                    SoundSetVolume(Max(curVol - step, 0))
                 case "volumemute":
-                    SoundSet(-1, , "Mute")
+                    SoundSetMute(-1)
                 case "lockscreen":
                     DllCall("user32\LockWorkStation")
                 case "screenshot":
