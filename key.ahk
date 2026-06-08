@@ -117,6 +117,9 @@ class ConfigManager {
                 if (!rule.Has("holdTime")) {
                     rule["holdTime"] := 500
                 }
+                if (!rule.Has("repeatInterval")) {
+                    rule["repeatInterval"] := 0
+                }
                 if (!rule.Has("timeStart")) {
                     rule["timeStart"] := ""
                 }
@@ -322,7 +325,7 @@ class HotkeyEngine {
 
     static OnTrigger(ThisHotkey) {
         if (!this.KeyPresses.Has(ThisHotkey)) {
-            this.KeyPresses[ThisHotkey] := {count: 0, timerFn: "", holdTimers: [], consumed: false, clickMatched: false, clickUnmatched: false}
+            this.KeyPresses[ThisHotkey] := {count: 0, timerFn: "", holdTimers: [], consumed: false, clickMatched: false, clickUnmatched: false, repeatTimer: ""}
         }
         
         data := this.KeyPresses[ThisHotkey]
@@ -413,6 +416,21 @@ class HotkeyEngine {
         data := this.KeyPresses[key]
         data.consumed := true
         ActionExecutor.Execute(rule)
+        
+        ; 长按连发：如果配置了 repeatInterval > 0，启动重复计时器
+        repeatInterval := rule.Has("repeatInterval") ? rule["repeatInterval"] : 0
+        if (repeatInterval > 0) {
+            repeatFn := this.DoRepeat.Bind(this, key, rule)
+            data.repeatTimer := repeatFn
+            SetTimer(repeatFn, repeatInterval)
+        }
+    }
+
+    static DoRepeat(key, rule) {
+        if (!this.KeyPresses.Has(key)) {
+            return
+        }
+        ActionExecutor.Execute(rule)
     }
 
     static OnKeyUp(ThisHotkey) {
@@ -430,6 +448,12 @@ class HotkeyEngine {
             SetTimer(timerFn, 0)
         }
         data.holdTimers := []
+        
+        ; 取消连发计时器
+        if (data.repeatTimer) {
+            SetTimer(data.repeatTimer, 0)
+            data.repeatTimer := ""
+        }
         
         ; 长按已触发，不再透传
         if (data.consumed) {
@@ -931,6 +955,11 @@ class UIManager {
         edHoldTime := editGui.Add("Edit", "x105 y115 w60 Number", existingRule && existingRule.Has("holdTime") ? existingRule["holdTime"] : "500")
         txtHoldMs := editGui.Add("Text", "x170 y118 w30", "ms")
         
+        ; --- 连发间隔（仅长按时显示）---
+        txtRepeat := editGui.Add("Text", "x220 y118 w55", I18n.T("RepeatLabel"))
+        edRepeat := editGui.Add("Edit", "x275 y115 w55 Number", existingRule && existingRule.Has("repeatInterval") ? existingRule["repeatInterval"] : "0")
+        txtRepeatMs := editGui.Add("Text", "x335 y118 w60", "ms (0=" I18n.T("RepeatOff") ")")
+        
         ; --- 点击次数与超时（仅点击时显示）---
         txtCount := editGui.Add("Text", "x30 y118 w75", I18n.T("CountLabel"))
         edCount := editGui.Add("Edit", "x105 y115 w50 Number", existingRule && existingRule.Has("count") ? existingRule["count"] : "1")
@@ -945,6 +974,9 @@ class UIManager {
             txtHoldTime.Visible := isLP
             edHoldTime.Visible := isLP
             txtHoldMs.Visible := isLP
+            txtRepeat.Visible := isLP
+            edRepeat.Visible := isLP
+            txtRepeatMs.Visible := isLP
             txtCount.Visible := !isLP
             edCount.Visible := !isLP
             txtTimeout.Visible := !isLP
@@ -1077,6 +1109,7 @@ class UIManager {
             newRule["count"] := Integer(edCount.Value)
             newRule["timeout"] := Integer(edTimeout.Value)
             newRule["holdTime"] := Integer(edHoldTime.Value)
+            newRule["repeatInterval"] := Integer(edRepeat.Value)
             newRule["timeStart"] := edTimeStart.Value
             newRule["timeEnd"] := edTimeEnd.Value
             newRule["actions"] := tempActions
@@ -1240,7 +1273,8 @@ class I18n {
             "TrigGroup", "Trigger Config", "GroupLabel", "Group:", "DescLabel", "Desc:",
             "KeyLabel", "Key:", "WindowLabel", "Window:", "CountLabel", "Count:",
             "TimeoutLabel", "Timeout:", "TrigTypeLabel", "Type:", "TrigClick", "Click", "TrigLongpress", "Long Press",
-            "HoldTimeLabel", "Hold Time:", "TimeRangeLabel", "Time:", "TimeRangeHint", "(e.g. 09:00-18:00, blank=always)",
+            "HoldTimeLabel", "Hold Time:", "RepeatLabel", "Repeat:", "RepeatOff", "off",
+            "TimeRangeLabel", "Time:", "TimeRangeHint", "(e.g. 09:00-18:00, blank=always)",
             "ActGroup", "Actions List", "TypeLabel", "Type:",
             "CmdLabel", "Command:", "BtnCapture", "Capture Key", "BtnCaptureWin", "Capture Window",
             "BtnCaptureCmd", "Capture Combo", "BtnAdd", "Add", "BtnUpdate", "Update",
@@ -1283,7 +1317,8 @@ class I18n {
             "TrigGroup", "触发配置", "GroupLabel", "分组名:", "DescLabel", "动作描述:",
             "KeyLabel", "触发键:", "WindowLabel", "生效窗口:", "CountLabel", "次数:",
             "TimeoutLabel", "超时:", "TrigTypeLabel", "方式:", "TrigClick", "点击", "TrigLongpress", "长按",
-            "HoldTimeLabel", "长按时长:", "TimeRangeLabel", "时段:", "TimeRangeHint", "(如 09:00-18:00, 留空=全天)",
+            "HoldTimeLabel", "长按时长:", "RepeatLabel", "连发:", "RepeatOff", "关",
+            "TimeRangeLabel", "时段:", "TimeRangeHint", "(如 09:00-18:00, 留空=全天)",
             "ActGroup", "动作执行序列", "TypeLabel", "动作类型:",
             "CmdLabel", "命令内容:", "BtnCapture", "捕获按键", "BtnCaptureWin", "捕获窗口",
             "BtnCaptureCmd", "捕获组合键", "BtnAdd", "添加", "BtnUpdate", "修改",
