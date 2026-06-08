@@ -250,30 +250,95 @@ class HotkeyEngine {
             }
         }
         
-        if (maxTimeout == 0) {
-            maxTimeout := 300
+        ; [长按] 为每个长按规则启动独立的 hold timer
+        for lpRule in longpressRules {
+            holdTime := lpRule.Has("holdTime") ? lpRule["holdTime"] : 500
+            timerFn := this.FireLongpress.Bind(this, ThisHotkey, lpRule)
+            data.holdTimers.Push(timerFn)
+            SetTimer(timerFn, -holdTime)
         }
+        
+        ; [点击] 点击计数逻辑（仅当有 click 规则时）
+        if (clickRules.Length > 0) {
+            if (maxTimeout == 0) {
+                maxTimeout := 300
+            }
 
+            if (data.timerFn) {
+                SetTimer(data.timerFn, 0)
+            }
+            
+            CurrentCallback := this.ProcessTrigger.Bind(this, ThisHotkey, data.count, clickRules)
+            data.timerFn := CurrentCallback
+            
+            ; [架构优化2] 状态机零延迟短路
+            ; 如果当前击键次数已经达到了该键所配置的“最高次数”，无需继续等待超时，立刻全速分发！
+            if (data.count >= maxRuleCount) {
+                CurrentCallback()
+            } else {
+                SetTimer(CurrentCallback, -maxTimeout)
+            }
+        }
+    }
+
+    static FireLongpress(key, rule) {
+        if (!this.KeyPresses.Has(key)) {
+            return
+        }
+        data := this.KeyPresses[key]
+        data.consumed := true
+        ActionExecutor.Execute(rule)
+    }
+
+    static OnKeyUp(ThisHotkey) {
+        ; 将 UP 热键名转回 DOWN 热键名: "$F10 Up" -> "$F10"
+        downKey := RegExReplace(ThisHotkey, "\s+Up$", "")
+        
+        if (!this.KeyPresses.Has(downKey)) {
+            return
+        }
+        
+        data := this.KeyPresses[downKey]
+        
+        ; 取消所有长按计时器
+        for timerFn in data.holdTimers {
+            SetTimer(timerFn, 0)
+        }
+        data.holdTimers := []
+        
+        ; 长按已触发，不再透传
+        if (data.consumed) {
+            data.consumed := false
+            return
+        }
+        
+        ; 点击已匹配，不再透传
+        if (data.clickMatched) {
+            data.clickMatched := false
+            return
+        }
+        
+        ; ProcessTrigger 运行了但没匹配到，且当时有长按计时器在跑 → 现在透传
+        if (data.clickUnmatched) {
+            data.clickUnmatched := false
+            this.PassThrough(downKey, 1)
+            return
+        }
+        
+        ; 短按：取消可能还在跑的 click 计时器，透传原生按键
         if (data.timerFn) {
             SetTimer(data.timerFn, 0)
+            data.timerFn := ""
         }
-        
-        CurrentCallback := this.ProcessTrigger.Bind(this, ThisHotkey, data.count, relevantRules)
-        data.timerFn := CurrentCallback
-        
-        ; [架构优化2] 状态机零延迟短路
-        ; 如果当前击键次数已经达到了该键所配置的“最高次数”，无需继续等待超时，立刻全速分发！
-        if (data.count >= maxRuleCount) {
-            CurrentCallback()
-        } else {
-            SetTimer(CurrentCallback, -maxTimeout)
-        }
+        this.PassThrough(downKey, 1)
+        data.count := 0
     }
 
     static ProcessTrigger(key, count, rulesList) {
         if (this.KeyPresses.Has(key)) {
-            this.KeyPresses[key].count := 0
-            this.KeyPresses[key].timerFn := ""
+            data := this.KeyPresses[key]
+            data.count := 0
+            data.timerFn := ""
         }
         
         matched := false
@@ -282,15 +347,22 @@ class HotkeyEngine {
             if (ruleCount == count) {
                 ActionExecutor.Execute(rule)
                 matched := true
+                if (this.KeyPresses.Has(key)) {
+                    this.KeyPresses[key].clickMatched := true
+                }
                 return
             }
         }
 
         ; [架构优化3] 事件漏斗兜底机制 (Pass-Through)
-        ; 如果该次击键没有命中任何自定义规则 (例如配置了双击拦截，但用户只进行了一次单击)
-        ; 则将干净的按键投递回 OS 的消息队列，恢复原生打字/操作功能
+        ; 如果该次击键没有命中任何自定义规则
+        ; 检查是否有长按计时器还在跑 → 有则推迟透传，等 OnKeyUp 处理
         if (!matched) {
-            this.PassThrough(key, count)
+            if (this.KeyPresses.Has(key) && this.KeyPresses[key].holdTimers.Length > 0) {
+                this.KeyPresses[key].clickUnmatched := true
+            } else {
+                this.PassThrough(key, count)
+            }
         }
     }
 
@@ -506,15 +578,16 @@ class UIManager {
         this.MainGui := Gui("+Resize +MinSize800x400", I18n.T("Title"))
         this.MainGui.SetFont("s9", "Segoe UI")
 
-        this.lvRules := this.MainGui.Add("ListView", "x10 y10 w780 h380 Grid Checked", [I18n.T("ColGroup"), I18n.T("ColDesc"), I18n.T("ColKey"), I18n.T("ColWindow"), I18n.T("ColCount"), I18n.T("ColTimeout"), I18n.T("ColActions")])
+        this.lvRules := this.MainGui.Add("ListView", "x10 y10 w780 h380 Grid Checked", [I18n.T("ColGroup"), I18n.T("ColDesc"), I18n.T("ColKey"), I18n.T("ColTrigger"), I18n.T("ColWindow"), I18n.T("ColCount"), I18n.T("ColHoldTime"), I18n.T("ColActions")])
         
-        this.lvRules.ModifyCol(1, 80)
-        this.lvRules.ModifyCol(2, 220)
-        this.lvRules.ModifyCol(3, 110)
-        this.lvRules.ModifyCol(4, 150)
-        this.lvRules.ModifyCol(5, 55)
-        this.lvRules.ModifyCol(6, 75)
-        this.lvRules.ModifyCol(7, 80)
+        this.lvRules.ModifyCol(1, 70)
+        this.lvRules.ModifyCol(2, 180)
+        this.lvRules.ModifyCol(3, 100)
+        this.lvRules.ModifyCol(4, 85)
+        this.lvRules.ModifyCol(5, 130)
+        this.lvRules.ModifyCol(6, 50)
+        this.lvRules.ModifyCol(7, 70)
+        this.lvRules.ModifyCol(8, 70)
 
         this.lvRules.OnEvent("ItemCheck", this.OnRuleCheck.Bind(this))
         this.lvRules.OnEvent("ContextMenu", this.ShowContextMenu.Bind(this))
@@ -551,12 +624,13 @@ class UIManager {
             g := rule.Has("group") ? rule["group"] : "Default"
             d := rule.Has("desc") ? rule["desc"] : ""
             k := rule.Has("key") ? rule["key"] : "?"
+            tt := rule.Has("triggerType") && rule["triggerType"] == "longpress" ? I18n.T("TrigLongpress") : I18n.T("TrigClick")
             w := rule.Has("window") && rule["window"] != "" ? rule["window"] : I18n.T("GlobalWindow")
             c := rule.Has("count") ? rule["count"] : "1"
-            t := rule.Has("timeout") ? rule["timeout"] : "300"
+            h := rule.Has("triggerType") && rule["triggerType"] == "longpress" ? (rule.Has("holdTime") ? rule["holdTime"] : "500") : "-"
             a := rule.Has("actions") ? rule["actions"].Length : 0
             
-            this.lvRules.Add(rule["enabled"] ? "Check" : "-Check", g, d, k, w, c, t, a " " I18n.T("Actions"))
+            this.lvRules.Add(rule["enabled"] ? "Check" : "-Check", g, d, k, tt, w, c, h, a " " I18n.T("Actions"))
         }
     }
 
@@ -627,52 +701,81 @@ class UIManager {
         editGui.SetFont("s9", "Segoe UI")
         editGui.OnEvent("Close", (*) => (RestoreState(), editGui.Destroy()))
         
-        editGui.Add("GroupBox", "x15 y15 w590 h155", I18n.T("TrigGroup"))
+        editGui.Add("GroupBox", "x15 y15 w590 h190", I18n.T("TrigGroup"))
         
-        editGui.Add("Text", "x30 y45 w75", I18n.T("GroupLabel"))
-        edGroup := editGui.Add("Edit", "x105 y42 w140", existingRule ? existingRule["group"] : "Default")
+        editGui.Add("Text", "x30 y42 w75", I18n.T("GroupLabel"))
+        edGroup := editGui.Add("Edit", "x105 y39 w140", existingRule ? existingRule["group"] : "Default")
         
-        editGui.Add("Text", "x270 y45 w75", I18n.T("DescLabel"))
-        edDesc := editGui.Add("Edit", "x345 y42 w240", existingRule ? existingRule["desc"] : "")
+        editGui.Add("Text", "x270 y42 w75", I18n.T("DescLabel"))
+        edDesc := editGui.Add("Edit", "x345 y39 w240", existingRule ? existingRule["desc"] : "")
 
-        editGui.Add("Text", "x30 y85 w75", I18n.T("KeyLabel"))
-        edKey := editGui.Add("Edit", "x105 y82 w140", existingRule ? existingRule["key"] : "")
-        btnCapture := editGui.Add("Button", "x255 y81 w85", I18n.T("BtnCapture"))
+        editGui.Add("Text", "x30 y80 w75", I18n.T("KeyLabel"))
+        edKey := editGui.Add("Edit", "x105 y77 w140", existingRule ? existingRule["key"] : "")
+        btnCapture := editGui.Add("Button", "x255 y76 w85", I18n.T("BtnCapture"))
         btnCapture.OnEvent("Click", (*) => KeyUtil.CaptureKey(edKey, editGui))
 
-        editGui.Add("Text", "x365 y85 w45", I18n.T("CountLabel"))
-        edCount := editGui.Add("Edit", "x410 y82 w50 Number", existingRule && existingRule.Has("count") ? existingRule["count"] : "1")
+        ; --- 触发类型选择 ---
+        editGui.Add("Text", "x365 y80 w55", I18n.T("TrigTypeLabel"))
+        trigTypeMap := ["click", "longpress"]
+        trigDisplay := [I18n.T("TrigClick"), I18n.T("TrigLongpress")]
+        defaultTrig := (existingRule && existingRule.Has("triggerType") && existingRule["triggerType"] == "longpress") ? 2 : 1
+        ddlTrigType := editGui.Add("DropDownList", "x420 y77 w90 Choose" defaultTrig, trigDisplay)
         
-        editGui.Add("Text", "x480 y85 w50", I18n.T("TimeoutLabel"))
-        edTimeout := editGui.Add("Edit", "x530 y82 w55 Number", existingRule && existingRule.Has("timeout") ? existingRule["timeout"] : "300")
+        ; --- 长按时长（仅长按时显示）---
+        txtHoldTime := editGui.Add("Text", "x30 y118 w75", I18n.T("HoldTimeLabel"))
+        edHoldTime := editGui.Add("Edit", "x105 y115 w60 Number", existingRule && existingRule.Has("holdTime") ? existingRule["holdTime"] : "500")
+        txtHoldMs := editGui.Add("Text", "x170 y118 w30", "ms")
+        
+        ; --- 点击次数与超时（仅点击时显示）---
+        txtCount := editGui.Add("Text", "x30 y118 w75", I18n.T("CountLabel"))
+        edCount := editGui.Add("Edit", "x105 y115 w50 Number", existingRule && existingRule.Has("count") ? existingRule["count"] : "1")
+        
+        txtTimeout := editGui.Add("Text", "x175 y118 w50", I18n.T("TimeoutLabel"))
+        edTimeout := editGui.Add("Edit", "x225 y115 w55 Number", existingRule && existingRule.Has("timeout") ? existingRule["timeout"] : "300")
+        txtTimeoutMs := editGui.Add("Text", "x285 y118 w30", "ms")
 
-        editGui.Add("Text", "x30 y125 w75", I18n.T("WindowLabel"))
-        edWindow := editGui.Add("Edit", "x105 y122 w235", existingRule && existingRule.Has("window") ? existingRule["window"] : "")
-        btnCaptureWin := editGui.Add("Button", "x350 y121 w110", I18n.T("BtnCaptureWin"))
+        ; 根据触发类型动态显示/隐藏字段
+        UpdateTriggerFields() {
+            isLP := (trigTypeMap[ddlTrigType.Value] == "longpress")
+            txtHoldTime.Visible := isLP
+            edHoldTime.Visible := isLP
+            txtHoldMs.Visible := isLP
+            txtCount.Visible := !isLP
+            edCount.Visible := !isLP
+            txtTimeout.Visible := !isLP
+            edTimeout.Visible := !isLP
+            txtTimeoutMs.Visible := !isLP
+        }
+        ddlTrigType.OnEvent("Change", (*) => UpdateTriggerFields())
+        UpdateTriggerFields()
+
+        editGui.Add("Text", "x30 y155 w75", I18n.T("WindowLabel"))
+        edWindow := editGui.Add("Edit", "x105 y152 w235", existingRule && existingRule.Has("window") ? existingRule["window"] : "")
+        btnCaptureWin := editGui.Add("Button", "x350 y151 w110", I18n.T("BtnCaptureWin"))
         btnCaptureWin.OnEvent("Click", (*) => KeyUtil.CaptureWindow(edWindow, editGui))
         
-        editGui.Add("Text", "x470 y125 w120 cGray", I18n.T("GlobalHint"))
+        editGui.Add("Text", "x470 y155 w120 cGray", I18n.T("GlobalHint"))
 
-        editGui.Add("GroupBox", "x15 y185 w590 h320", I18n.T("ActGroup"))
+        editGui.Add("GroupBox", "x15 y220 w590 h320", I18n.T("ActGroup"))
         
-        editGui.Add("Text", "x30 y215 w75", I18n.T("TypeLabel"))
         typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay"]
         displayTypes := []
         for t in typeMap {
             displayTypes.Push(I18n.T("Act_" t))
         }
-        ddlType := editGui.Add("DropDownList", "x105 y212 w140 Choose1", displayTypes)
+        editGui.Add("Text", "x30 y250 w75", I18n.T("TypeLabel"))
+        ddlType := editGui.Add("DropDownList", "x105 y247 w140 Choose1", displayTypes)
         
-        editGui.Add("Text", "x265 y215 w75", I18n.T("CmdLabel")) 
-        edCommand := editGui.Add("Edit", "x340 y212 w155", "")
-        btnCaptureCmd := editGui.Add("Button", "x505 y211 w80", I18n.T("BtnCaptureCmd"))
+        editGui.Add("Text", "x265 y250 w75", I18n.T("CmdLabel")) 
+        edCommand := editGui.Add("Edit", "x340 y247 w155", "")
+        btnCaptureCmd := editGui.Add("Button", "x505 y246 w80", I18n.T("BtnCaptureCmd"))
         btnCaptureCmd.OnEvent("Click", (*) => KeyUtil.CaptureKey(edCommand, editGui))
 
-        btnAddAction := editGui.Add("Button", "x385 y250 w65", I18n.T("BtnAdd"))
-        btnUpdateAction := editGui.Add("Button", "x455 y250 w65", I18n.T("BtnUpdate"))
-        btnDelAction := editGui.Add("Button", "x525 y250 w65", I18n.T("BtnDelete"))
+        btnAddAction := editGui.Add("Button", "x385 y285 w65", I18n.T("BtnAdd"))
+        btnUpdateAction := editGui.Add("Button", "x455 y285 w65", I18n.T("BtnUpdate"))
+        btnDelAction := editGui.Add("Button", "x525 y285 w65", I18n.T("BtnDelete"))
         
-        lvActions := editGui.Add("ListView", "x30 y285 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
+        lvActions := editGui.Add("ListView", "x30 y320 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
         lvActions.ModifyCol(1, 140)
         lvActions.ModifyCol(2, 395)
 
@@ -739,8 +842,8 @@ class UIManager {
             tempActions.RemoveAt(row)
         }
 
-        btnSave := editGui.Add("Button", "x200 y525 w100 h35", I18n.T("BtnSave"))
-        btnCancel := editGui.Add("Button", "x320 y525 w100 h35", I18n.T("BtnCancel"))
+        btnSave := editGui.Add("Button", "x200 y560 w100 h35", I18n.T("BtnSave"))
+        btnCancel := editGui.Add("Button", "x320 y560 w100 h35", I18n.T("BtnCancel"))
 
         btnSave.OnEvent("Click", (*) => SaveTheRule())
         btnCancel.OnEvent("Click", (*) => (RestoreState(), editGui.Destroy()))
@@ -758,8 +861,10 @@ class UIManager {
             newRule["desc"] := edDesc.Value
             newRule["key"] := newKey
             newRule["window"] := edWindow.Value
+            newRule["triggerType"] := trigTypeMap[ddlTrigType.Value]
             newRule["count"] := Integer(edCount.Value)
             newRule["timeout"] := Integer(edTimeout.Value)
+            newRule["holdTime"] := Integer(edHoldTime.Value)
             newRule["actions"] := tempActions
 
             if (ruleIndex > 0) {
@@ -787,10 +892,12 @@ class I18n {
             "AddRule", "Add Rule", "EditRule", "Edit Rule", "DeleteRule", "Delete Rule",
             "Startup", "Run at startup", "LangSwitch", "中文 / English",
             "ColGroup", "Group", "ColDesc", "Description", "ColKey", "Key", "ColWindow", "Window",
-            "ColCount", "Count", "ColTimeout", "Timeout", "ColActions", "Actions",
+            "ColCount", "Count", "ColTimeout", "Timeout(ms)", "ColHoldTime", "Hold(ms)", "ColActions", "Actions",
+            "ColTrigger", "Trigger",
             "TrigGroup", "Trigger Config", "GroupLabel", "Group:", "DescLabel", "Desc:",
             "KeyLabel", "Key:", "WindowLabel", "Window:", "CountLabel", "Count:",
-            "TimeoutLabel", "Timeout:", "ActGroup", "Actions List", "TypeLabel", "Type:",
+            "TimeoutLabel", "Timeout:", "TrigTypeLabel", "Type:", "TrigClick", "Click", "TrigLongpress", "Long Press",
+            "HoldTimeLabel", "Hold Time:", "ActGroup", "Actions List", "TypeLabel", "Type:",
             "CmdLabel", "Command:", "BtnCapture", "Capture Key", "BtnCaptureWin", "Capture Window",
             "BtnCaptureCmd", "Capture Combo", "BtnAdd", "Add", "BtnUpdate", "Update",
             "BtnDelete", "Delete", "BtnSave", "Save Config", "BtnCancel", "Cancel",
@@ -809,10 +916,12 @@ class I18n {
             "AddRule", "添加规则", "EditRule", "编辑当前规则", "DeleteRule", "删除当前规则",
             "Startup", "开机自启", "LangSwitch", "English / 中文",
             "ColGroup", "分组", "ColDesc", "动作描述", "ColKey", "触发按键", "ColWindow", "目标窗口",
-            "ColCount", "点击数", "ColTimeout", "超时(ms)", "ColActions", "动作数量",
+            "ColCount", "点击数", "ColTimeout", "超时(ms)", "ColHoldTime", "长按(ms)", "ColActions", "动作数量",
+            "ColTrigger", "触发方式",
             "TrigGroup", "触发配置", "GroupLabel", "分组名:", "DescLabel", "动作描述:",
             "KeyLabel", "触发键:", "WindowLabel", "生效窗口:", "CountLabel", "次数:",
-            "TimeoutLabel", "超时:", "ActGroup", "动作执行序列", "TypeLabel", "动作类型:",
+            "TimeoutLabel", "超时:", "TrigTypeLabel", "方式:", "TrigClick", "点击", "TrigLongpress", "长按",
+            "HoldTimeLabel", "长按时长:", "ActGroup", "动作执行序列", "TypeLabel", "动作类型:",
             "CmdLabel", "命令内容:", "BtnCapture", "捕获按键", "BtnCaptureWin", "捕获窗口",
             "BtnCaptureCmd", "捕获组合键", "BtnAdd", "添加", "BtnUpdate", "修改",
             "BtnDelete", "删除", "BtnSave", "保存配置", "BtnCancel", "取消",
