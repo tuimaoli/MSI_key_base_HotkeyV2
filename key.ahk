@@ -601,6 +601,25 @@ class ActionExecutor {
                     if (IsInteger(cmd)) {
                         Sleep(Integer(cmd))
                     }
+                case "volumeup":
+                    step := IsInteger(cmd) ? Integer(cmd) : 2
+                    SoundSet("+" step)
+                case "volumedown":
+                    step := IsInteger(cmd) ? Integer(cmd) : 2
+                    SoundSet("-" step)
+                case "volumemute":
+                    SoundSet(-1, , "Mute")
+                case "lockscreen":
+                    DllCall("user32\LockWorkStation")
+                case "screenshot":
+                    Run("snippingtool.exe")
+                case "sleep":
+                    DllCall("PowrProf\SetSuspendState", "int", 0, "int", 0, "int", 0)
+                case "shutdown":
+                    result := MsgBox(I18n.T("ShutdownConfirm"), I18n.T("ShutdownTitle"), 0x4)
+                    if (result == "Yes") {
+                        Shutdown(9)
+                    }
                 default:
                     MsgBox("Unknown action type: " actType)
             }
@@ -1002,7 +1021,7 @@ class UIManager {
 
         editGui.Add("GroupBox", "x15 y255 w590 h320", I18n.T("ActGroup"))
         
-        typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay"]
+        typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay", "VolumeUp", "VolumeDown", "VolumeMute", "LockScreen", "Screenshot", "Sleep", "Shutdown"]
         displayTypes := []
         for t in typeMap {
             displayTypes.Push(I18n.T("Act_" t))
@@ -1282,6 +1301,8 @@ class I18n {
             "GlobalWindow", "[Global]", "GlobalHint", "(Leave blank for Global)",
             "Act_Run", "Run Program", "Act_URL", "Open URL", "Act_CMD", "Command Line",
             "Act_Send", "Send Text", "Act_Paste", "Fast Paste", "Act_KeyCombo", "Key Combo", "Act_Delay", "Delay(ms)",
+            "Act_VolumeUp", "Volume Up", "Act_VolumeDown", "Volume Down", "Act_VolumeMute", "Volume Mute",
+            "Act_LockScreen", "Lock Screen", "Act_Screenshot", "Screenshot", "Act_Sleep", "Sleep", "Act_Shutdown", "Shutdown",
             "MsgEmptyCmd", "Empty command.", "MsgSelectToUpdate", "Select action first.",
             "MsgEmptyKey", "Key cannot be empty.", "TrayShow", "Dashboard", "TrayPause", "Pause Hotkeys",
             "TrayExit", "Exit", "ExecFeedback", "Executing: ", "PressKey", "Press Key...",
@@ -1305,7 +1326,9 @@ class I18n {
             "LogFileLabel", "Filename:", "LogClearDaysLabel", "Auto-clear:",
             "LogClearDaysHint", "days (0=never)",
             "LogBrowse", "Browse...", "LogEmpty", "Log is empty.",
-            "LogCleared", "Log cleared.", "LogClearFail", "Failed to clear log:"
+            "LogCleared", "Log cleared.", "LogClearFail", "Failed to clear log:",
+            "ShutdownConfirm", "Are you sure you want to shutdown?",
+            "ShutdownTitle", "Shutdown"
         ),
         "zh", Map(
             "Title", "快捷键管理器 V2.5 (极简版)",
@@ -1326,6 +1349,8 @@ class I18n {
             "GlobalWindow", "【全局生效】", "GlobalHint", "(留空即全局生效)",
             "Act_Run", "运行程序 (Run)", "Act_URL", "打开网址 (URL)", "Act_CMD", "命令行 (CMD)",
             "Act_Send", "发送文本 (Send)", "Act_Paste", "极速粘贴 (Paste)", "Act_KeyCombo", "发送组合键 (Combo)", "Act_Delay", "延时等待 (Delay)",
+            "Act_VolumeUp", "音量+", "Act_VolumeDown", "音量-", "Act_VolumeMute", "静音切换",
+            "Act_LockScreen", "锁屏", "Act_Screenshot", "截图", "Act_Sleep", "休眠", "Act_Shutdown", "关机",
             "MsgEmptyCmd", "内容不可为空。", "MsgSelectToUpdate", "请先在列表中选中项。",
             "MsgEmptyKey", "触发键不可为空。", "TrayShow", "打开控制台", "TrayPause", "挂起快捷键",
             "TrayExit", "退出程序", "ExecFeedback", "正在执行动作：", "PressKey", "请按键...",
@@ -1349,7 +1374,9 @@ class I18n {
             "LogFileLabel", "文件名:", "LogClearDaysLabel", "自动清除:",
             "LogClearDaysHint", "天 (0=不清除)",
             "LogBrowse", "浏览...", "LogEmpty", "日志为空。",
-            "LogCleared", "日志已清除。", "LogClearFail", "清除日志失败:"
+            "LogCleared", "日志已清除。", "LogClearFail", "清除日志失败:",
+            "ShutdownConfirm", "确定要关机吗？",
+            "ShutdownTitle", "关机确认"
         )
     )
 
