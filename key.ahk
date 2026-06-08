@@ -43,6 +43,10 @@ class AppCore {
         A_TrayMenu.Add(I18n.T("ImportConfig"), (*) => ConfigManager.Import())
         A_TrayMenu.Add(I18n.T("ProcessGroupsMenu"), (*) => UIManager.ShowProcessGroups())
         A_TrayMenu.Add() ; 分隔线
+        A_TrayMenu.Add(I18n.T("LogView"), (*) => LogManager.View())
+        A_TrayMenu.Add(I18n.T("LogClear"), (*) => LogManager.Clear())
+        A_TrayMenu.Add(I18n.T("LogSettings"), (*) => LogManager.ShowSettings())
+        A_TrayMenu.Add() ; 分隔线
         A_TrayMenu.Add(I18n.T("TrayPause"), (*) => this.ToggleSuspend())
         A_TrayMenu.Add(I18n.T("TrayExit"), (*) => ExitApp())
         
@@ -68,7 +72,10 @@ class ConfigManager {
     static Rules := []
     static RunOnStartup := false
     static AppLang := "zh"
-    static ProcessGroups := [] 
+    static ProcessGroups := []
+    static LogPath := ""
+    static LogFile := "hotkey_log.txt"
+    static LogClearDays := 30 
 
     static Load() {
         if (!FileExist(this.FilePath)) {
@@ -86,6 +93,9 @@ class ConfigManager {
                 this.RunOnStartup := loadedData.Has("runOnStartup") ? loadedData["runOnStartup"] : false
                 this.AppLang := loadedData.Has("language") ? loadedData["language"] : "zh"
                 this.ProcessGroups := loadedData.Has("processGroups") ? loadedData["processGroups"] : []
+                this.LogPath := loadedData.Has("logPath") ? loadedData["logPath"] : ""
+                this.LogFile := loadedData.Has("logFile") ? loadedData["logFile"] : "hotkey_log.txt"
+                this.LogClearDays := loadedData.Has("logClearDays") ? loadedData["logClearDays"] : 30
             }
 
             for rule in this.Rules {
@@ -127,6 +137,9 @@ class ConfigManager {
             configObj["language"] := this.AppLang
             configObj["rules"] := this.Rules
             configObj["processGroups"] := this.ProcessGroups
+            configObj["logPath"] := this.LogPath
+            configObj["logFile"] := this.LogFile
+            configObj["logClearDays"] := this.LogClearDays
 
             FileOpen(this.FilePath, "w").Write(JSON.Dump(configObj, "    "))
             this.ManageStartupShortcut(this.RunOnStartup)
@@ -525,6 +538,9 @@ class ActionExecutor {
         displayStr := (rule.Has("desc") && rule["desc"] != "") ? rule["desc"] : rule["key"]
         ToolTip(I18n.T("ExecFeedback") displayStr " ...")
         SetTimer(() => ToolTip(), -1500)
+        
+        ; 写入执行日志
+        LogManager.Write(displayStr, rule["key"], rule["actions"])
 
         for action in rule["actions"] {
             if (!action.Has("type") || !action.Has("command")) {
@@ -1081,6 +1097,135 @@ class UIManager {
 }
 
 ; ==============================================================================
+; EXECUTION LOG MANAGER
+; ==============================================================================
+class LogManager {
+    static GetFullPath() {
+        dir := ConfigManager.LogPath != "" ? ConfigManager.LogPath : A_ScriptDir
+        if (SubStr(dir, -1) != "\") {
+            dir .= "\"
+        }
+        return dir ConfigManager.LogFile
+    }
+
+    static Write(ruleDesc, ruleKey, actions) {
+        if (ConfigManager.LogPath == "" && ConfigManager.LogFile == "hotkey_log.txt" && ConfigManager.LogClearDays == 30) {
+            ; 默认值 = 未配置日志，跳过
+            return
+        }
+        try {
+            fullPath := this.GetFullPath()
+            SplitPath(fullPath, , &dir)
+            if (!DirExist(dir)) {
+                DirCreate(dir)
+            }
+            actStr := ""
+            for act in actions {
+                if (actStr != "") {
+                    actStr .= "; "
+                }
+                actStr .= act["type"] ":" act["command"]
+            }
+            timestamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+            line := "[" timestamp "] " ruleDesc " | Key: " ruleKey " | Actions: " actStr "`n"
+            FileAppend(line, fullPath)
+            this.AutoClear()
+        }
+    }
+
+    static AutoClear() {
+        if (ConfigManager.LogClearDays <= 0) {
+            return
+        }
+        try {
+            fullPath := this.GetFullPath()
+            if (!FileExist(fullPath)) {
+                return
+            }
+            cutoff := DateAdd(A_Now, -ConfigManager.LogClearDays, "Days")
+            tempPath := fullPath ".tmp"
+            keepFile := FileOpen(tempPath, "w")
+            readFile := FileOpen(fullPath, "r")
+            kept := 0
+            while (!readFile.AtEOF) {
+                line := readFile.ReadLine()
+                ; 提取时间戳: [yyyy-MM-dd HH:mm:ss]
+                if (RegExMatch(line, "^\[(\d{4}-\d{2}-\d{2})", &m)) {
+                    lineDate := m[1]
+                    if (lineDate >= FormatTime(cutoff, "yyyy-MM-dd")) {
+                        keepFile.WriteLine(line)
+                        kept++
+                    }
+                } else {
+                    keepFile.WriteLine(line)
+                    kept++
+                }
+            }
+            readFile.Close()
+            keepFile.Close()
+            FileMove(tempPath, fullPath, 1)
+        }
+    }
+
+    static Clear() {
+        try {
+            fullPath := this.GetFullPath()
+            if (FileExist(fullPath)) {
+                FileDelete(fullPath)
+            }
+            MsgBox(I18n.T("LogCleared"))
+        } catch as err {
+            MsgBox(I18n.T("LogClearFail") "`n" err.Message)
+        }
+    }
+
+    static View() {
+        fullPath := this.GetFullPath()
+        if (!FileExist(fullPath)) {
+            MsgBox(I18n.T("LogEmpty"))
+            return
+        }
+        Run(fullPath)
+    }
+
+    static ShowSettings() {
+        setGui := Gui("+Owner", I18n.T("LogSettingsTitle"))
+        setGui.SetFont("s9", "Segoe UI")
+        setGui.OnEvent("Close", (*) => setGui.Destroy())
+        
+        setGui.Add("Text", "x15 y15 w80", I18n.T("LogPathLabel"))
+        edLogPath := setGui.Add("Edit", "x100 y12 w300", ConfigManager.LogPath)
+        btnBrowse := setGui.Add("Button", "x410 y11 w80", I18n.T("LogBrowse"))
+        btnBrowse.OnEvent("Click", (*) => BrowseLogPath())
+        BrowseLogPath() {
+            dir := DirSelect(ConfigManager.LogPath, 0, I18n.T("LogBrowse"))
+            if (dir != "") {
+                edLogPath.Value := dir
+            }
+        }
+        
+        setGui.Add("Text", "x15 y50 w80", I18n.T("LogFileLabel"))
+        edLogFile := setGui.Add("Edit", "x100 y47 w150", ConfigManager.LogFile)
+        
+        setGui.Add("Text", "x15 y85 w80", I18n.T("LogClearDaysLabel"))
+        edLogClear := setGui.Add("Edit", "x100 y82 w60 Number", ConfigManager.LogClearDays)
+        setGui.Add("Text", "x165 y85 w100", I18n.T("LogClearDaysHint"))
+        
+        btnSave := setGui.Add("Button", "x100 y125 w80", I18n.T("BtnSave"))
+        btnSave.OnEvent("Click", (*) => SaveLogSettings())
+        SaveLogSettings() {
+            ConfigManager.LogPath := edLogPath.Value
+            ConfigManager.LogFile := edLogFile.Value != "" ? edLogFile.Value : "hotkey_log.txt"
+            ConfigManager.LogClearDays := Integer(edLogClear.Value)
+            ConfigManager.Save()
+            setGui.Destroy()
+        }
+        
+        setGui.Show("AutoSize")
+    }
+}
+
+; ==============================================================================
 ; INTERNATIONALIZATION (I18N)
 ; ==============================================================================
 class I18n {
@@ -1120,7 +1265,13 @@ class I18n {
             "ProcessGroupsTitle", "Process-Aware Groups",
             "ProcessGroupsDesc", "When a process is running, its linked rule group will be auto-enabled.",
             "ProcessExe", "Process (exe)", "ProcessGroup", "Group", "ProcessEnabled", "Active",
-            "Yes", "Yes", "No", "No"
+            "Yes", "Yes", "No", "No",
+            "LogView", "View Log", "LogClear", "Clear Log", "LogSettings", "Log Settings",
+            "LogSettingsTitle", "Log Settings", "LogPathLabel", "Path:",
+            "LogFileLabel", "Filename:", "LogClearDaysLabel", "Auto-clear:",
+            "LogClearDaysHint", "days (0=never)",
+            "LogBrowse", "Browse...", "LogEmpty", "Log is empty.",
+            "LogCleared", "Log cleared.", "LogClearFail", "Failed to clear log:"
         ),
         "zh", Map(
             "Title", "快捷键管理器 V2.5 (极简版)",
@@ -1157,7 +1308,13 @@ class I18n {
             "ProcessGroupsTitle", "进程感知分组",
             "ProcessGroupsDesc", "当指定进程运行时，自动启用关联的规则分组。",
             "ProcessExe", "进程名(exe)", "ProcessGroup", "分组", "ProcessEnabled", "启用",
-            "Yes", "是", "No", "否"
+            "Yes", "是", "No", "否",
+            "LogView", "查看日志", "LogClear", "清除日志", "LogSettings", "日志设置",
+            "LogSettingsTitle", "日志设置", "LogPathLabel", "路径:",
+            "LogFileLabel", "文件名:", "LogClearDaysLabel", "自动清除:",
+            "LogClearDaysHint", "天 (0=不清除)",
+            "LogBrowse", "浏览...", "LogEmpty", "日志为空。",
+            "LogCleared", "日志已清除。", "LogClearFail", "清除日志失败:"
         )
     )
 
