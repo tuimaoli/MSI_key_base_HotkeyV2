@@ -103,6 +103,12 @@ class ConfigManager {
                 if (!rule.Has("holdTime")) {
                     rule["holdTime"] := 500
                 }
+                if (!rule.Has("timeStart")) {
+                    rule["timeStart"] := ""
+                }
+                if (!rule.Has("timeEnd")) {
+                    rule["timeEnd"] := ""
+                }
             }
         } catch as err {
             MsgBox("Error loading config.json:`n" err.Message)
@@ -296,6 +302,12 @@ class HotkeyEngine {
                         continue
                     }
                 }
+                ; 时间段过滤
+                if (rule.Has("timeStart") && rule["timeStart"] != "" || rule.Has("timeEnd") && rule["timeEnd"] != "") {
+                    if (!this.IsInTimeWindow(rule["timeStart"], rule["timeEnd"])) {
+                        continue
+                    }
+                }
                 triggerType := rule.Has("triggerType") ? rule["triggerType"] : "click"
                 
                 if (triggerType == "longpress") {
@@ -427,6 +439,18 @@ class HotkeyEngine {
                 this.PassThrough(key, count)
             }
         }
+    }
+
+    static IsInTimeWindow(tStart, tEnd) {
+        ; 空字符串表示不限制
+        now := A_Hour ":" Format("{:02d}", A_Min)
+        if (tStart != "" && tStart > now) {
+            return false
+        }
+        if (tEnd != "" && tEnd < now) {
+            return false
+        }
+        return true
     }
 
     static PassThrough(hk, count) {
@@ -764,7 +788,7 @@ class UIManager {
         editGui.SetFont("s9", "Segoe UI")
         editGui.OnEvent("Close", (*) => (RestoreState(), editGui.Destroy()))
         
-        editGui.Add("GroupBox", "x15 y15 w590 h190", I18n.T("TrigGroup"))
+        editGui.Add("GroupBox", "x15 y15 w590 h225", I18n.T("TrigGroup"))
         
         editGui.Add("Text", "x30 y42 w75", I18n.T("GroupLabel"))
         edGroup := editGui.Add("Edit", "x105 y39 w140", existingRule ? existingRule["group"] : "Default")
@@ -819,26 +843,33 @@ class UIManager {
         
         editGui.Add("Text", "x470 y155 w120 cGray", I18n.T("GlobalHint"))
 
-        editGui.Add("GroupBox", "x15 y220 w590 h320", I18n.T("ActGroup"))
+        ; --- 时间段过滤 ---
+        editGui.Add("Text", "x30 y192 w75", I18n.T("TimeRangeLabel"))
+        edTimeStart := editGui.Add("Edit", "x105 y189 w55", existingRule && existingRule.Has("timeStart") ? existingRule["timeStart"] : "")
+        editGui.Add("Text", "x165 y192 w15", "-")
+        edTimeEnd := editGui.Add("Edit", "x180 y189 w55", existingRule && existingRule.Has("timeEnd") ? existingRule["timeEnd"] : "")
+        editGui.Add("Text", "x240 y192 w140 cGray", I18n.T("TimeRangeHint"))
+
+        editGui.Add("GroupBox", "x15 y255 w590 h320", I18n.T("ActGroup"))
         
         typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay"]
         displayTypes := []
         for t in typeMap {
             displayTypes.Push(I18n.T("Act_" t))
         }
-        editGui.Add("Text", "x30 y250 w75", I18n.T("TypeLabel"))
-        ddlType := editGui.Add("DropDownList", "x105 y247 w140 Choose1", displayTypes)
+        editGui.Add("Text", "x30 y285 w75", I18n.T("TypeLabel"))
+        ddlType := editGui.Add("DropDownList", "x105 y282 w140 Choose1", displayTypes)
         
-        editGui.Add("Text", "x265 y250 w75", I18n.T("CmdLabel")) 
-        edCommand := editGui.Add("Edit", "x340 y247 w155", "")
-        btnCaptureCmd := editGui.Add("Button", "x505 y246 w80", I18n.T("BtnCaptureCmd"))
+        editGui.Add("Text", "x265 y285 w75", I18n.T("CmdLabel")) 
+        edCommand := editGui.Add("Edit", "x340 y282 w155", "")
+        btnCaptureCmd := editGui.Add("Button", "x505 y281 w80", I18n.T("BtnCaptureCmd"))
         btnCaptureCmd.OnEvent("Click", (*) => KeyUtil.CaptureKey(edCommand, editGui))
 
-        btnAddAction := editGui.Add("Button", "x385 y285 w65", I18n.T("BtnAdd"))
-        btnUpdateAction := editGui.Add("Button", "x455 y285 w65", I18n.T("BtnUpdate"))
-        btnDelAction := editGui.Add("Button", "x525 y285 w65", I18n.T("BtnDelete"))
+        btnAddAction := editGui.Add("Button", "x385 y320 w65", I18n.T("BtnAdd"))
+        btnUpdateAction := editGui.Add("Button", "x455 y320 w65", I18n.T("BtnUpdate"))
+        btnDelAction := editGui.Add("Button", "x525 y320 w65", I18n.T("BtnDelete"))
         
-        lvActions := editGui.Add("ListView", "x30 y320 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
+        lvActions := editGui.Add("ListView", "x30 y355 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
         lvActions.ModifyCol(1, 140)
         lvActions.ModifyCol(2, 395)
 
@@ -905,8 +936,8 @@ class UIManager {
             tempActions.RemoveAt(row)
         }
 
-        btnSave := editGui.Add("Button", "x200 y560 w100 h35", I18n.T("BtnSave"))
-        btnCancel := editGui.Add("Button", "x320 y560 w100 h35", I18n.T("BtnCancel"))
+        btnSave := editGui.Add("Button", "x200 y595 w100 h35", I18n.T("BtnSave"))
+        btnCancel := editGui.Add("Button", "x320 y595 w100 h35", I18n.T("BtnCancel"))
 
         btnSave.OnEvent("Click", (*) => SaveTheRule())
         btnCancel.OnEvent("Click", (*) => (RestoreState(), editGui.Destroy()))
@@ -928,6 +959,8 @@ class UIManager {
             newRule["count"] := Integer(edCount.Value)
             newRule["timeout"] := Integer(edTimeout.Value)
             newRule["holdTime"] := Integer(edHoldTime.Value)
+            newRule["timeStart"] := edTimeStart.Value
+            newRule["timeEnd"] := edTimeEnd.Value
             newRule["actions"] := tempActions
 
             if (ruleIndex > 0) {
@@ -960,7 +993,8 @@ class I18n {
             "TrigGroup", "Trigger Config", "GroupLabel", "Group:", "DescLabel", "Desc:",
             "KeyLabel", "Key:", "WindowLabel", "Window:", "CountLabel", "Count:",
             "TimeoutLabel", "Timeout:", "TrigTypeLabel", "Type:", "TrigClick", "Click", "TrigLongpress", "Long Press",
-            "HoldTimeLabel", "Hold Time:", "ActGroup", "Actions List", "TypeLabel", "Type:",
+            "HoldTimeLabel", "Hold Time:", "TimeRangeLabel", "Time:", "TimeRangeHint", "(e.g. 09:00-18:00, blank=always)",
+            "ActGroup", "Actions List", "TypeLabel", "Type:",
             "CmdLabel", "Command:", "BtnCapture", "Capture Key", "BtnCaptureWin", "Capture Window",
             "BtnCaptureCmd", "Capture Combo", "BtnAdd", "Add", "BtnUpdate", "Update",
             "BtnDelete", "Delete", "BtnSave", "Save Config", "BtnCancel", "Cancel",
@@ -991,7 +1025,8 @@ class I18n {
             "TrigGroup", "触发配置", "GroupLabel", "分组名:", "DescLabel", "动作描述:",
             "KeyLabel", "触发键:", "WindowLabel", "生效窗口:", "CountLabel", "次数:",
             "TimeoutLabel", "超时:", "TrigTypeLabel", "方式:", "TrigClick", "点击", "TrigLongpress", "长按",
-            "HoldTimeLabel", "长按时长:", "ActGroup", "动作执行序列", "TypeLabel", "动作类型:",
+            "HoldTimeLabel", "长按时长:", "TimeRangeLabel", "时段:", "TimeRangeHint", "(如 09:00-18:00, 留空=全天)",
+            "ActGroup", "动作执行序列", "TypeLabel", "动作类型:",
             "CmdLabel", "命令内容:", "BtnCapture", "捕获按键", "BtnCaptureWin", "捕获窗口",
             "BtnCaptureCmd", "捕获组合键", "BtnAdd", "添加", "BtnUpdate", "修改",
             "BtnDelete", "删除", "BtnSave", "保存配置", "BtnCancel", "取消",
