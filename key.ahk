@@ -1064,17 +1064,17 @@ class UIManager {
         ; --- 时间段过滤 (下拉框防误输入) ---
         editGui.Add("Text", "x30 y192 w45", I18n.T("TimeStartLabel"))
         ; 解析已有时间值
-        sh := ""; sm := ""; eh := ""; em := ""
+        sh := "", sm := "", eh := "", em := ""
         if (existingRule && existingRule.Has("timeStart") && existingRule["timeStart"] != "") {
             parts := StrSplit(existingRule["timeStart"], ":")
             if (parts.Length == 2) {
-                sh := parts[1]; sm := parts[2]
+                sh := parts[1], sm := parts[2]
             }
         }
         if (existingRule && existingRule.Has("timeEnd") && existingRule["timeEnd"] != "") {
             parts := StrSplit(existingRule["timeEnd"], ":")
             if (parts.Length == 2) {
-                eh := parts[1]; em := parts[2]
+                eh := parts[1], em := parts[2]
             }
         }
         hourList := [I18n.T("TimeOff")]
@@ -1220,8 +1220,8 @@ class UIManager {
             newRule["holdTime"] := Integer(edHoldTime.Value)
             newRule["repeatInterval"] := Integer(edRepeat.Value)
             ; 时间：从下拉框取值(选"不限"→空)
-            sHIdx := ddlStartH.Value; sMIdx := ddlStartM.Value
-            eHIdx := ddlEndH.Value; eMIdx := ddlEndM.Value
+            sHIdx := ddlStartH.Value, sMIdx := ddlStartM.Value
+            eHIdx := ddlEndH.Value, eMIdx := ddlEndM.Value
             newRule["timeStart"] := (sHIdx > 1 && sMIdx > 1) ? Format("{:02d}:{:02d}", sHIdx - 2, sMIdx - 2) : ""
             newRule["timeEnd"] := (eHIdx > 1 && eMIdx > 1) ? Format("{:02d}:{:02d}", eHIdx - 2, eMIdx - 2) : ""
             ; 星期：从复选框取值(全选→"")
