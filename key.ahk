@@ -126,6 +126,9 @@ class ConfigManager {
                 if (!rule.Has("timeEnd")) {
                     rule["timeEnd"] := ""
                 }
+                if (!rule.Has("days")) {
+                    rule["days"] := ""
+                }
             }
         } catch as err {
             MsgBox("Error loading config.json:`n" err.Message)
@@ -368,9 +371,12 @@ class HotkeyEngine {
                         continue
                     }
                 }
-                ; 时间段过滤
-                if (rule.Has("timeStart") && rule["timeStart"] != "" || rule.Has("timeEnd") && rule["timeEnd"] != "") {
-                    if (!this.IsInTimeWindow(rule["timeStart"], rule["timeEnd"])) {
+                ; 时间段 + 星期过滤
+                ts := rule.Has("timeStart") ? rule["timeStart"] : ""
+                te := rule.Has("timeEnd") ? rule["timeEnd"] : ""
+                td := rule.Has("days") ? rule["days"] : ""
+                if (ts != "" || te != "" || (td != "" && td != "*")) {
+                    if (!this.IsInTimeWindow(ts, te, td)) {
                         continue
                     }
                 }
@@ -545,16 +551,39 @@ class HotkeyEngine {
         }
     }
 
-    static IsInTimeWindow(tStart, tEnd) {
-        ; 空字符串表示不限制
-        now := A_Hour ":" Format("{:02d}", A_Min)
-        if (tStart != "" && tStart > now) {
-            return false
+    static IsInTimeWindow(tStart, tEnd, days) {
+        ; 检查星期
+        if (days != "" && days != "*") {
+            ; days 格式: "1,2,3,4,5" (1=周一..7=周日)
+            ; A_WDay: 1=Sun, 2=Mon..7=Sat
+            userDay := (A_WDay == 1) ? 7 : A_WDay - 1
+            if (!InStr("," days ",", "," userDay ",")) {
+                return false
+            }
         }
-        if (tEnd != "" && tEnd < now) {
-            return false
+        ; 检查时间 — 空字符串表示不限制
+        if (tStart == "" && tEnd == "") {
+            return true
         }
-        return true
+        nowMin := A_Hour * 60 + A_Min
+        startMin := tStart != "" ? this.TimeStrToMin(tStart) : 0
+        endMin := tEnd != "" ? this.TimeStrToMin(tEnd) : 1439
+        
+        if (startMin <= endMin) {
+            ; 正常区间: 09:00 ~ 18:00
+            return nowMin >= startMin && nowMin <= endMin
+        } else {
+            ; 跨天区间: 21:00 ~ 09:00 (start > end)
+            return nowMin >= startMin || nowMin <= endMin
+        }
+    }
+
+    static TimeStrToMin(t) {
+        ; "09:36" or "9:36" -> 576
+        if (!RegExMatch(t, "^(\d{1,2}):(\d{2})$", &m)) {
+            return 0
+        }
+        return Integer(m[1]) * 60 + Integer(m[2])
     }
 
     static PassThrough(hk, count) {
@@ -969,7 +998,7 @@ class UIManager {
         editGui.SetFont("s9", "Segoe UI")
         editGui.OnEvent("Close", (*) => (RestoreState(), editGui.Destroy()))
         
-        editGui.Add("GroupBox", "x15 y15 w590 h225", I18n.T("TrigGroup"))
+        editGui.Add("GroupBox", "x15 y15 w590 h270", I18n.T("TrigGroup"))
         
         editGui.Add("Text", "x30 y42 w75", I18n.T("GroupLabel"))
         edGroup := editGui.Add("Edit", "x105 y39 w140", existingRule ? existingRule["group"] : "Default")
@@ -1032,33 +1061,74 @@ class UIManager {
         
         editGui.Add("Text", "x470 y155 w120 cGray", I18n.T("GlobalHint"))
 
-        ; --- 时间段过滤 ---
-        editGui.Add("Text", "x30 y192 w75", I18n.T("TimeRangeLabel"))
-        edTimeStart := editGui.Add("Edit", "x105 y189 w55", existingRule && existingRule.Has("timeStart") ? existingRule["timeStart"] : "")
-        editGui.Add("Text", "x165 y192 w15", "-")
-        edTimeEnd := editGui.Add("Edit", "x180 y189 w55", existingRule && existingRule.Has("timeEnd") ? existingRule["timeEnd"] : "")
-        editGui.Add("Text", "x240 y192 w140 cGray", I18n.T("TimeRangeHint"))
+        ; --- 时间段过滤 (下拉框防误输入) ---
+        editGui.Add("Text", "x30 y192 w45", I18n.T("TimeStartLabel"))
+        ; 解析已有时间值
+        sh := ""; sm := ""; eh := ""; em := ""
+        if (existingRule && existingRule.Has("timeStart") && existingRule["timeStart"] != "") {
+            parts := StrSplit(existingRule["timeStart"], ":")
+            if (parts.Length == 2) {
+                sh := parts[1]; sm := parts[2]
+            }
+        }
+        if (existingRule && existingRule.Has("timeEnd") && existingRule["timeEnd"] != "") {
+            parts := StrSplit(existingRule["timeEnd"], ":")
+            if (parts.Length == 2) {
+                eh := parts[1]; em := parts[2]
+            }
+        }
+        hourList := [I18n.T("TimeOff")]
+        Loop 24 {
+            hourList.Push(Format("{:02d}", A_Index - 1))
+        }
+        minList := [I18n.T("TimeOff")]
+        Loop 60 {
+            minList.Push(Format("{:02d}", A_Index - 1))
+        }
+        hIdx := (sh != "") ? (Integer(sh) + 2) : 1
+        mIdx := (sm != "") ? (Integer(sm) + 2) : 1
+        ddlStartH := editGui.Add("DropDownList", "x78 y189 w50 Choose" hIdx, hourList)
+        ddlStartM := editGui.Add("DropDownList", "x132 y189 w50 Choose" mIdx, minList)
+        editGui.Add("Text", "x188 y192 w15", "-")
+        ehIdx := (eh != "") ? (Integer(eh) + 2) : 1
+        emIdx := (em != "") ? (Integer(em) + 2) : 1
+        ddlEndH := editGui.Add("DropDownList", "x205 y189 w50 Choose" ehIdx, hourList)
+        ddlEndM := editGui.Add("DropDownList", "x259 y189 w50 Choose" emIdx, minList)
+        editGui.Add("Text", "x315 y192 w120 cGray", I18n.T("TimeRangeHint"))
+        
+        ; --- 星期过滤 ---
+        editGui.Add("Text", "x30 y225 w45", I18n.T("DaysLabel"))
+        dayNames := [I18n.T("DayMon"), I18n.T("DayTue"), I18n.T("DayWed"), I18n.T("DayThu"), I18n.T("DayFri"), I18n.T("DaySat"), I18n.T("DaySun")]
+        cbDays := []
+        existingDays := (existingRule && existingRule.Has("days") && existingRule["days"] != "" && existingRule["days"] != "*") ? existingRule["days"] : ""
+        xPos := 78
+        Loop 7 {
+            checked := (existingDays == "" || InStr("," existingDays ",", "," A_Index ",")) ? "Checked" : ""
+            cb := editGui.Add("CheckBox", "x" xPos " y222 w32 " checked, dayNames[A_Index])
+            cbDays.Push(cb)
+            xPos += 36
+        }
 
-        editGui.Add("GroupBox", "x15 y255 w590 h320", I18n.T("ActGroup"))
+        editGui.Add("GroupBox", "x15 y300 w590 h320", I18n.T("ActGroup"))
         
         typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay", "LockScreen", "Sleep", "Shutdown"]
         displayTypes := []
         for t in typeMap {
             displayTypes.Push(I18n.T("Act_" t))
         }
-        editGui.Add("Text", "x30 y285 w75", I18n.T("TypeLabel"))
-        ddlType := editGui.Add("DropDownList", "x105 y282 w140 Choose1", displayTypes)
+        editGui.Add("Text", "x30 y330 w75", I18n.T("TypeLabel"))
+        ddlType := editGui.Add("DropDownList", "x105 y327 w140 Choose1", displayTypes)
         
-        editGui.Add("Text", "x265 y285 w75", I18n.T("CmdLabel")) 
-        edCommand := editGui.Add("Edit", "x340 y282 w155", "")
-        btnCaptureCmd := editGui.Add("Button", "x505 y281 w80", I18n.T("BtnCaptureCmd"))
+        editGui.Add("Text", "x265 y330 w75", I18n.T("CmdLabel")) 
+        edCommand := editGui.Add("Edit", "x340 y327 w155", "")
+        btnCaptureCmd := editGui.Add("Button", "x505 y326 w80", I18n.T("BtnCaptureCmd"))
         btnCaptureCmd.OnEvent("Click", (*) => KeyUtil.CaptureKey(edCommand, editGui))
 
-        btnAddAction := editGui.Add("Button", "x385 y320 w65", I18n.T("BtnAdd"))
-        btnUpdateAction := editGui.Add("Button", "x455 y320 w65", I18n.T("BtnUpdate"))
-        btnDelAction := editGui.Add("Button", "x525 y320 w65", I18n.T("BtnDelete"))
+        btnAddAction := editGui.Add("Button", "x385 y365 w65", I18n.T("BtnAdd"))
+        btnUpdateAction := editGui.Add("Button", "x455 y365 w65", I18n.T("BtnUpdate"))
+        btnDelAction := editGui.Add("Button", "x525 y365 w65", I18n.T("BtnDelete"))
         
-        lvActions := editGui.Add("ListView", "x30 y355 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
+        lvActions := editGui.Add("ListView", "x30 y400 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
         lvActions.ModifyCol(1, 140)
         lvActions.ModifyCol(2, 395)
 
@@ -1125,8 +1195,8 @@ class UIManager {
             tempActions.RemoveAt(row)
         }
 
-        btnSave := editGui.Add("Button", "x200 y595 w100 h35", I18n.T("BtnSave"))
-        btnCancel := editGui.Add("Button", "x320 y595 w100 h35", I18n.T("BtnCancel"))
+        btnSave := editGui.Add("Button", "x200 y640 w100 h35", I18n.T("BtnSave"))
+        btnCancel := editGui.Add("Button", "x320 y640 w100 h35", I18n.T("BtnCancel"))
 
         btnSave.OnEvent("Click", (*) => SaveTheRule())
         btnCancel.OnEvent("Click", (*) => (RestoreState(), editGui.Destroy()))
@@ -1149,8 +1219,19 @@ class UIManager {
             newRule["timeout"] := Integer(edTimeout.Value)
             newRule["holdTime"] := Integer(edHoldTime.Value)
             newRule["repeatInterval"] := Integer(edRepeat.Value)
-            newRule["timeStart"] := edTimeStart.Value
-            newRule["timeEnd"] := edTimeEnd.Value
+            ; 时间：从下拉框取值(选"不限"→空)
+            sHIdx := ddlStartH.Value; sMIdx := ddlStartM.Value
+            eHIdx := ddlEndH.Value; eMIdx := ddlEndM.Value
+            newRule["timeStart"] := (sHIdx > 1 && sMIdx > 1) ? Format("{:02d}:{:02d}", sHIdx - 2, sMIdx - 2) : ""
+            newRule["timeEnd"] := (eHIdx > 1 && eMIdx > 1) ? Format("{:02d}:{:02d}", eHIdx - 2, eMIdx - 2) : ""
+            ; 星期：从复选框取值(全选→"")
+            dayStr := ""
+            for i, cb in cbDays {
+                if (cb.Value) {
+                    dayStr .= (dayStr != "" ? "," : "") i
+                }
+            }
+            newRule["days"] := (dayStr == "1,2,3,4,5,6,7") ? "" : dayStr
             newRule["actions"] := tempActions
 
             if (ruleIndex > 0) {
@@ -1313,7 +1394,9 @@ class I18n {
             "KeyLabel", "Key:", "WindowLabel", "Window:", "CountLabel", "Count:",
             "TimeoutLabel", "Timeout:", "TrigTypeLabel", "Type:", "TrigClick", "Click", "TrigLongpress", "Long Press",
             "HoldTimeLabel", "Hold Time:", "RepeatLabel", "Repeat:", "RepeatOff", "off",
-            "TimeRangeLabel", "Time:", "TimeRangeHint", "(e.g. 09:00-18:00, blank=always)",
+            "TimeStartLabel", "Start:", "TimeRangeHint", "(start>end=cross midnight)",
+            "DaysLabel", "Days:", "TimeOff", "--",
+            "DayMon", "Mon", "DayTue", "Tue", "DayWed", "Wed", "DayThu", "Thu", "DayFri", "Fri", "DaySat", "Sat", "DaySun", "Sun",
             "ActGroup", "Actions List", "TypeLabel", "Type:",
             "CmdLabel", "Command:", "BtnCapture", "Capture Key", "BtnCaptureWin", "Capture Window",
             "BtnCaptureCmd", "Capture Combo", "BtnAdd", "Add", "BtnUpdate", "Update",
@@ -1360,7 +1443,9 @@ class I18n {
             "KeyLabel", "触发键:", "WindowLabel", "生效窗口:", "CountLabel", "次数:",
             "TimeoutLabel", "超时:", "TrigTypeLabel", "方式:", "TrigClick", "点击", "TrigLongpress", "长按",
             "HoldTimeLabel", "长按时长:", "RepeatLabel", "连发:", "RepeatOff", "关",
-            "TimeRangeLabel", "时段:", "TimeRangeHint", "(如 09:00-18:00, 留空=全天)",
+            "TimeStartLabel", "开始:", "TimeRangeHint", "(开始>结束=跨天)",
+            "DaysLabel", "星期:", "TimeOff", "不限",
+            "DayMon", "一", "DayTue", "二", "DayWed", "三", "DayThu", "四", "DayFri", "五", "DaySat", "六", "DaySun", "日",
             "ActGroup", "动作执行序列", "TypeLabel", "动作类型:",
             "CmdLabel", "命令内容:", "BtnCapture", "捕获按键", "BtnCaptureWin", "捕获窗口",
             "BtnCaptureCmd", "捕获组合键", "BtnAdd", "添加", "BtnUpdate", "修改",
