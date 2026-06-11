@@ -441,7 +441,16 @@ class HotkeyEngine {
             return
         }
         data := this.KeyPresses[key]
+        ; 防止同键多长按规则同时触发
+        if (data.consumed) {
+            return
+        }
         data.consumed := true
+        ; 长按已触发 → 取消可能还在跑的点击计时器，防止后续多余透传
+        if (data.timerFn) {
+            SetTimer(data.timerFn, 0)
+            data.timerFn := ""
+        }
         ActionExecutor.Execute(rule)
         
         ; 长按连发：如果配置了 repeatInterval > 0，启动重复计时器
@@ -518,11 +527,11 @@ class HotkeyEngine {
             return
         }
         
-        ; 短按：取消可能还在跑的 click 计时器，透传原生按键
+        ; 点击计时器还在跑 → 留给它处理（双击检测/透传），不在此处拍板
         if (data.timerFn) {
-            SetTimer(data.timerFn, 0)
-            data.timerFn := ""
+            return
         }
+        ; 无点击计时器 → 直接透传
         this.PassThrough(downKey, 1)
         data.count := 0
     }
@@ -538,11 +547,16 @@ class HotkeyEngine {
         for rule in rulesList {
             ruleCount := rule.Has("count") ? rule["count"] : 1
             if (ruleCount == count) {
-                ActionExecutor.Execute(rule)
-                matched := true
+                ; 点击已匹配 → 取消所有待处理的长按计时器，防止"点击+继续按住"双触发
                 if (this.KeyPresses.Has(key)) {
+                    for timerFn in this.KeyPresses[key].holdTimers {
+                        SetTimer(timerFn, 0)
+                    }
+                    this.KeyPresses[key].holdTimers := []
                     this.KeyPresses[key].clickMatched := true
                 }
+                ActionExecutor.Execute(rule)
+                matched := true
                 return
             }
         }
