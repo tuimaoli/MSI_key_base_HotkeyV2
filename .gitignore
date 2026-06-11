@@ -1,0 +1,7 @@
+build
+*.old
+.vscode
+*.lock
+*.bin
+发布
+config.*
