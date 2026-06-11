@@ -1,0 +1,32 @@
+{
+    "language": "zh",
+    "logClearDays": 30,
+    "logFile": "hotkey_log.txt",
+    "logPath": "",
+    "processGroups": [
+    ],
+    "rules": [
+        {
+            "actions": [
+                {
+                    "command": "notepad.exe",
+                    "type": "Run"
+                }
+            ],
+            "count": 2,
+            "days": "",
+            "desc": "双击打开记事本",
+            "enabled": true,
+            "group": "Default",
+            "holdTime": 500,
+            "key": "F10",
+            "repeatInterval": 0,
+            "timeEnd": "",
+            "timeStart": "",
+            "timeout": 300,
+            "triggerType": "click",
+            "window": ""
+        }
+    ],
+    "runOnStartup": false
+}

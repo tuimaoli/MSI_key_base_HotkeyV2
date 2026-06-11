@@ -1,7 +1,18 @@
-build
+# Build output
+build/
+发布/
+
+# IDE
+.vscode/
+
+# Temp/backup files
 *.old
-.vscode
 *.lock
 *.bin
-发布
-config.*
+*.bak
+
+# User config (template is tracked as config.example.json)
+config.json
+
+# AHK compiled exe
+*.exe

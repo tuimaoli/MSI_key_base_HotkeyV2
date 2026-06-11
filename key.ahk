@@ -83,7 +83,7 @@ class ConfigManager {
             return
         }
         try {
-            text := FileRead(this.FilePath)
+            text := FileRead(this.FilePath, "UTF-8")
             loadedData := JSON.Load(text)
             
             if (loadedData is Array) {
@@ -147,10 +147,9 @@ class ConfigManager {
             configObj["logFile"] := this.LogFile
             configObj["logClearDays"] := this.LogClearDays
 
-            FileOpen(this.FilePath, "w").Write(JSON.Dump(configObj, "    "))
+            FileOpen(this.FilePath, "w", "UTF-8").Write(JSON.Dump(configObj, "    "))
             this.ManageStartupShortcut(this.RunOnStartup)
 
-            this.Load()
             UIManager.UpdateMainListView()
             HotkeyEngine.ApplyAll(this.Rules)
         } catch as err {
@@ -181,7 +180,7 @@ class ConfigManager {
             configObj["runOnStartup"] := this.RunOnStartup
             configObj["language"] := this.AppLang
             configObj["rules"] := this.Rules
-            FileOpen(savePath, "w").Write(JSON.Dump(configObj, "    "))
+            FileOpen(savePath, "w", "UTF-8").Write(JSON.Dump(configObj, "    "))
             MsgBox(I18n.T("ExportSuccess") "`n" savePath)
         } catch as err {
             MsgBox(I18n.T("ExportFail") "`n" err.Message)
@@ -194,7 +193,11 @@ class ConfigManager {
             return
         }
         try {
-            text := FileRead(openPath)
+            try {
+                text := FileRead(openPath, "UTF-8")
+            } catch {
+                text := FileRead(openPath)  ; 兼容旧版 GBK 导出
+            }
             loadedData := JSON.Load(text)
             importRules := loadedData.Has("rules") ? loadedData["rules"] : (loadedData is Array ? loadedData : [])
             
@@ -236,6 +239,9 @@ class ConfigManager {
     }
 
     static CheckProcesses() {
+        if (this.ProcessGroups.Length == 0) {
+            return
+        }
         changed := false
         for pg in this.ProcessGroups {
             if (!pg.Has("exe") || !pg.Has("group") || pg["exe"] = "" || pg["group"] = "") {
@@ -349,6 +355,8 @@ class HotkeyEngine {
         data.consumed := false
         data.clickMatched := false
         data.clickUnmatched := false
+        data.holdTimers := []
+        data.repeatTimer := ""
         
         maxTimeout := 0
         maxRuleCount := 1
@@ -698,11 +706,12 @@ class KeyUtil {
     static CaptureKey(ctrl, parentGui) {
         wasSuspended := A_IsSuspended
         Suspend(true)
+        savedVal := ctrl.Value
         ctrl.Value := I18n.T("PressKey")
-        ih := InputHook("L0 T5") 
+        ih := InputHook("L0 T5")
         ih.VisibleNonText := false
         ih.KeyOpt("{All}", "E")
-        ih.KeyOpt("{LCtrl}{RCtrl}{LAlt}{RAlt}{LShift}{RShift}{LWin}{RWin}", "-E") 
+        ih.KeyOpt("{LCtrl}{RCtrl}{LAlt}{RAlt}{LShift}{RShift}{LWin}{RWin}", "-E")
         ih.Start()
         ih.Wait()
         if (ih.EndKey != "") {
@@ -720,6 +729,8 @@ class KeyUtil {
                 mods .= "Win + "
             }
             ctrl.Value := mods . ih.EndKey
+        } else {
+            ctrl.Value := savedVal
         }
         if (!wasSuspended) {
             Suspend(false)
@@ -881,10 +892,11 @@ class UIManager {
     static ShowContextMenu(ctrl, item, isRightClick, x, y) {
         ctxMenu := Menu()
         ctxMenu.Add(I18n.T("AddRule"), (*) => this.ShowEditRule())
-        
+
         if (item > 0) {
             ctxMenu.Add()
             ctxMenu.Add(I18n.T("EditRule"), (*) => this.ShowEditRule(ConfigManager.Rules[item], item))
+            ctxMenu.Add(I18n.T("DuplicateRule"), (*) => this.DuplicateRuleCallback(item))
             ctxMenu.Add(I18n.T("DeleteRule"), (*) => this.DeleteRuleCallback(item))
             ctxMenu.Add()
             currentGroup := ConfigManager.Rules[item]["group"]
@@ -894,9 +906,19 @@ class UIManager {
         ctxMenu.Show()
     }
 
-    static DeleteRuleCallback(itemIndex) {
-        ConfigManager.Rules.RemoveAt(itemIndex)
+    static DuplicateRuleCallback(itemIndex) {
+        cloned := ConfigManager.Rules[itemIndex].Clone()
+        cloned["enabled"] := true
+        ConfigManager.Rules.InsertAt(itemIndex + 1, cloned)
         ConfigManager.Save()
+    }
+
+    static DeleteRuleCallback(itemIndex) {
+        result := MsgBox(I18n.T("DeleteConfirm"), I18n.T("DeleteTitle"), 0x4)
+        if (result == "Yes") {
+            ConfigManager.Rules.RemoveAt(itemIndex)
+            ConfigManager.Save()
+        }
     }
 
     static ToggleGroup(targetGroup, state) {
@@ -928,6 +950,7 @@ class UIManager {
         pgGui := Gui("+Owner", I18n.T("ProcessGroupsTitle"))
         pgGui.SetFont("s9", "Segoe UI")
         pgGui.OnEvent("Close", (*) => pgGui.Destroy())
+        pgGui.OnEvent("Escape", (*) => pgGui.Destroy())
         
         pgGui.Add("Text", "x15 y15 w500", I18n.T("ProcessGroupsDesc"))
         
@@ -990,6 +1013,10 @@ class UIManager {
     }
 
     static ShowEditRule(existingRule := "", ruleIndex := 0) {
+        ; 从托盘创建新规则时，先呼出主窗口（避免修改窗口孤悬）
+        if (!existingRule) {
+            this.ShowMain()
+        }
         wasSuspended := A_IsSuspended
         Suspend(true)
         RestoreState := (*) => (!wasSuspended ? Suspend(false) : "")
@@ -997,6 +1024,7 @@ class UIManager {
         editGui := Gui("+Owner" this.MainGui.Hwnd, I18n.T("EditRule"))
         editGui.SetFont("s9", "Segoe UI")
         editGui.OnEvent("Close", (*) => (RestoreState(), editGui.Destroy()))
+        editGui.OnEvent("Escape", (*) => (RestoreState(), editGui.Destroy()))
         
         editGui.Add("GroupBox", "x15 y15 w590 h270", I18n.T("TrigGroup"))
         
@@ -1038,7 +1066,7 @@ class UIManager {
 
         ; 根据触发类型动态显示/隐藏字段
         UpdateTriggerFields() {
-            isLP := (trigTypeMap[ddlTrigType.Value] == "longpress")
+            isLP := (ddlTrigType.Text == I18n.T("TrigLongpress"))
             txtHoldTime.Visible := isLP
             edHoldTime.Visible := isLP
             txtHoldMs.Visible := isLP
@@ -1140,7 +1168,15 @@ class UIManager {
             }
         }
 
-        GetActualType := () => typeMap[ddlType.Value]
+        GetActualType() {
+            selText := ddlType.Text
+            for idx, t in typeMap {
+                if (I18n.T("Act_" t) == selText) {
+                    return t
+                }
+            }
+            return typeMap[1]
+        }
 
         btnAddAction.OnEvent("Click", (*) => AddActionToUI())
         AddActionToUI() {
@@ -1214,16 +1250,17 @@ class UIManager {
             newRule["desc"] := edDesc.Value
             newRule["key"] := newKey
             newRule["window"] := edWindow.Value
-            newRule["triggerType"] := trigTypeMap[ddlTrigType.Value]
+            newRule["triggerType"] := (ddlTrigType.Text == I18n.T("TrigClick")) ? "click" : "longpress"
             newRule["count"] := Integer(edCount.Value)
             newRule["timeout"] := Integer(edTimeout.Value)
             newRule["holdTime"] := Integer(edHoldTime.Value)
             newRule["repeatInterval"] := Integer(edRepeat.Value)
             ; 时间：从下拉框取值(选"不限"→空)
-            sHIdx := ddlStartH.Value, sMIdx := ddlStartM.Value
-            eHIdx := ddlEndH.Value, eMIdx := ddlEndM.Value
-            newRule["timeStart"] := (sHIdx > 1 && sMIdx > 1) ? Format("{:02d}:{:02d}", sHIdx - 2, sMIdx - 2) : ""
-            newRule["timeEnd"] := (eHIdx > 1 && eMIdx > 1) ? Format("{:02d}:{:02d}", eHIdx - 2, eMIdx - 2) : ""
+            offText := I18n.T("TimeOff")
+            sH := ddlStartH.Text, sM := ddlStartM.Text
+            eH := ddlEndH.Text, eM := ddlEndM.Text
+            newRule["timeStart"] := (sH != offText && sM != offText) ? sH ":" sM : ""
+            newRule["timeEnd"] := (eH != offText && eM != offText) ? eH ":" eM : ""
             ; 星期：从复选框取值(全选→"")
             dayStr := ""
             for i, cb in cbDays {
@@ -1253,6 +1290,8 @@ class UIManager {
 ; EXECUTION LOG MANAGER
 ; ==============================================================================
 class LogManager {
+    static LastClearDate := ""
+
     static GetFullPath() {
         dir := ConfigManager.LogPath != "" ? ConfigManager.LogPath : A_ScriptDir
         if (SubStr(dir, -1) != "\") {
@@ -1281,8 +1320,12 @@ class LogManager {
             }
             timestamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
             line := "[" timestamp "] " ruleDesc " | Key: " ruleKey " | Actions: " actStr "`n"
-            FileAppend(line, fullPath)
-            this.AutoClear()
+            FileAppend(line, fullPath, "UTF-8")
+            today := FormatTime(A_Now, "yyyy-MM-dd")
+            if (today != this.LastClearDate) {
+                this.LastClearDate := today
+                this.AutoClear()
+            }
         }
     }
 
@@ -1297,8 +1340,8 @@ class LogManager {
             }
             cutoff := DateAdd(A_Now, -ConfigManager.LogClearDays, "Days")
             tempPath := fullPath ".tmp"
-            keepFile := FileOpen(tempPath, "w")
-            readFile := FileOpen(fullPath, "r")
+            keepFile := FileOpen(tempPath, "w", "UTF-8")
+            readFile := FileOpen(fullPath, "r", "UTF-8")
             kept := 0
             while (!readFile.AtEOF) {
                 line := readFile.ReadLine()
@@ -1345,6 +1388,7 @@ class LogManager {
         setGui := Gui("+Owner", I18n.T("LogSettingsTitle"))
         setGui.SetFont("s9", "Segoe UI")
         setGui.OnEvent("Close", (*) => setGui.Destroy())
+        setGui.OnEvent("Escape", (*) => setGui.Destroy())
         
         setGui.Add("Text", "x15 y15 w80", I18n.T("LogPathLabel"))
         edLogPath := setGui.Add("Edit", "x100 y12 w300", ConfigManager.LogPath)
@@ -1385,7 +1429,7 @@ class I18n {
     static Dict := Map(
         "en", Map(
             "Title", "Hotkey Manager V2.5 (Pro)",
-            "AddRule", "Add Rule", "EditRule", "Edit Rule", "DeleteRule", "Delete Rule",
+            "AddRule", "Add Rule", "EditRule", "Edit Rule", "DuplicateRule", "Duplicate Rule", "DeleteRule", "Delete Rule",
             "Startup", "Run at startup", "LangSwitch", "中文 / English",
             "ColGroup", "Group", "ColDesc", "Description", "ColKey", "Key", "ColWindow", "Window",
             "ColCount", "Count", "ColTimeout", "Timeout(ms)", "ColHoldTime", "Hold(ms)", "ColActions", "Actions",
@@ -1430,11 +1474,13 @@ class I18n {
             "LogBrowse", "Browse...", "LogEmpty", "Log is empty.",
             "LogCleared", "Log cleared.", "LogClearFail", "Failed to clear log:",
             "ShutdownConfirm", "Are you sure you want to shutdown?",
-            "ShutdownTitle", "Shutdown"
+            "ShutdownTitle", "Shutdown",
+            "DeleteConfirm", "Delete this rule?",
+            "DeleteTitle", "Delete Rule"
         ),
         "zh", Map(
             "Title", "快捷键管理器 V2.5 (极简版)",
-            "AddRule", "添加规则", "EditRule", "编辑当前规则", "DeleteRule", "删除当前规则",
+            "AddRule", "添加规则", "EditRule", "编辑当前规则", "DuplicateRule", "复制规则", "DeleteRule", "删除当前规则",
             "Startup", "开机自启", "LangSwitch", "English / 中文",
             "ColGroup", "分组", "ColDesc", "动作描述", "ColKey", "触发按键", "ColWindow", "目标窗口",
             "ColCount", "点击数", "ColTimeout", "超时(ms)", "ColHoldTime", "长按(ms)", "ColActions", "动作数量",
@@ -1479,7 +1525,9 @@ class I18n {
             "LogBrowse", "浏览...", "LogEmpty", "日志为空。",
             "LogCleared", "日志已清除。", "LogClearFail", "清除日志失败:",
             "ShutdownConfirm", "确定要关机吗？",
-            "ShutdownTitle", "关机确认"
+            "ShutdownTitle", "关机确认",
+            "DeleteConfirm", "确定删除此规则？",
+            "DeleteTitle", "删除确认"
         )
     )
 
