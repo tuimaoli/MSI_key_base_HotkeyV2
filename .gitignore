@@ -14,5 +14,9 @@ build/
 # User config (template is tracked as config.example.json)
 config.json
 
+# Runtime logs
+hotkey_log.txt
+hotkey_log.txt.tmp
+
 # AHK compiled exe
 *.exe

@@ -25,6 +25,7 @@ class AppCore {
         this.BuildTrayMenu()
         UIManager.BuildMain()
         HotkeyEngine.ApplyAll(ConfigManager.Rules)
+        HotkeyEngine.StartRepeatGuard()
         ConfigManager.StartProcessMonitor()
     }
 
@@ -99,41 +100,59 @@ class ConfigManager {
             }
 
             for rule in this.Rules {
-                if (!rule.Has("actions")) {
-                    rule["actions"] := []
-                }
-                if (!rule.Has("desc")) {
-                    rule["desc"] := ""
-                }
-                if (!rule.Has("group")) {
-                    rule["group"] := "Default"
-                }
-                if (!rule.Has("enabled")) {
-                    rule["enabled"] := true
-                }
-                if (!rule.Has("triggerType")) {
-                    rule["triggerType"] := "click"
-                }
-                if (!rule.Has("holdTime")) {
-                    rule["holdTime"] := 500
-                }
-                if (!rule.Has("repeatInterval")) {
-                    rule["repeatInterval"] := 0
-                }
-                if (!rule.Has("timeStart")) {
-                    rule["timeStart"] := ""
-                }
-                if (!rule.Has("timeEnd")) {
-                    rule["timeEnd"] := ""
-                }
-                if (!rule.Has("days")) {
-                    rule["days"] := ""
-                }
+                this.NormalizeRule(rule)
             }
         } catch as err {
             MsgBox("Error loading config.json:`n" err.Message)
             this.Rules := []
         }
+    }
+
+    static NormalizeRule(rule) {
+        ; 补齐缺失字段，防止导入/手工编辑的配置缺字段导致访问崩溃
+        if (!rule.Has("key")) {
+            rule["key"] := ""
+        }
+        if (!rule.Has("actions")) {
+            rule["actions"] := []
+        }
+        if (!rule.Has("desc")) {
+            rule["desc"] := ""
+        }
+        if (!rule.Has("group")) {
+            rule["group"] := "Default"
+        }
+        if (!rule.Has("enabled")) {
+            rule["enabled"] := true
+        }
+        if (!rule.Has("triggerType")) {
+            rule["triggerType"] := "click"
+        }
+        if (!rule.Has("count")) {
+            rule["count"] := 1
+        }
+        if (!rule.Has("timeout")) {
+            rule["timeout"] := 300
+        }
+        if (!rule.Has("holdTime")) {
+            rule["holdTime"] := 500
+        }
+        if (!rule.Has("repeatInterval")) {
+            rule["repeatInterval"] := 0
+        }
+        if (!rule.Has("timeStart")) {
+            rule["timeStart"] := ""
+        }
+        if (!rule.Has("timeEnd")) {
+            rule["timeEnd"] := ""
+        }
+        if (!rule.Has("days")) {
+            rule["days"] := ""
+        }
+        if (!rule.Has("window")) {
+            rule["window"] := ""
+        }
+        return rule
     }
 
     static Save() {
@@ -147,7 +166,9 @@ class ConfigManager {
             configObj["logFile"] := this.LogFile
             configObj["logClearDays"] := this.LogClearDays
 
-            FileOpen(this.FilePath, "w", "UTF-8").Write(JSON.Dump(configObj, "    "))
+            f := FileOpen(this.FilePath, "w", "UTF-8")
+            f.Write(JSON.Dump(configObj, "    "))
+            f.Close()
             this.ManageStartupShortcut(this.RunOnStartup)
 
             UIManager.UpdateMainListView()
@@ -180,7 +201,9 @@ class ConfigManager {
             configObj["runOnStartup"] := this.RunOnStartup
             configObj["language"] := this.AppLang
             configObj["rules"] := this.Rules
-            FileOpen(savePath, "w", "UTF-8").Write(JSON.Dump(configObj, "    "))
+            f := FileOpen(savePath, "w", "UTF-8")
+            f.Write(JSON.Dump(configObj, "    "))
+            f.Close()
             MsgBox(I18n.T("ExportSuccess") "`n" savePath)
         } catch as err {
             MsgBox(I18n.T("ExportFail") "`n" err.Message)
@@ -210,6 +233,7 @@ class ConfigManager {
             if (result == "Yes") {
                 ; 合并：追加不冲突的规则
                 for newRule in importRules {
+                    this.NormalizeRule(newRule)
                     dup := false
                     for existRule in this.Rules {
                         if (existRule["key"] == newRule["key"] && existRule.Has("triggerType") && newRule.Has("triggerType") && existRule["triggerType"] == newRule["triggerType"]) {
@@ -223,6 +247,9 @@ class ConfigManager {
                 }
             } else if (result == "No") {
                 ; 替换
+                for newRule in importRules {
+                    this.NormalizeRule(newRule)
+                }
                 this.Rules := importRules
             } else {
                 return
@@ -280,6 +307,7 @@ class HotkeyEngine {
     static ActiveHotkeys := Map()
     static ActiveUpHotkeys := Map()
     static KeyPresses := Map()
+    static DownState := Map()
 
     static ApplyAll(rules) {
         ; 清场：卸载并挂起所有旧热键
@@ -345,7 +373,33 @@ class HotkeyEngine {
         }
     }
 
+    static GetPhysicalKey(hk) {
+        ; 从热键名提取物理键名，剥离 $ ~ ^ ! + # < > 前缀及 {} 包裹
+        k := RegExReplace(hk, "^[\$\~\^\!\+\#\<\>]+", "")
+        k := RegExReplace(k, "^\{([^}]+)\}$", "$1")
+        return k
+    }
+
+    static StartRepeatGuard() {
+        SetTimer(this.CheckDownState.Bind(this), 30)
+    }
+
+    static CheckDownState() {
+        ; 轮询清除已物理松开的键，供 OnTrigger 判断键盘自动重复
+        for key, _ in this.DownState {
+            if (!GetKeyState(key, "P")) {
+                this.DownState.Delete(key)
+            }
+        }
+    }
+
     static OnTrigger(ThisHotkey) {
+        physKey := this.GetPhysicalKey(ThisHotkey)
+        ; [去抖] 忽略键盘自动重复：键物理上尚未松开时的再次触发视为系统 repeat
+        if (this.DownState.Has(physKey) && this.DownState[physKey]) {
+            return
+        }
+        this.DownState[physKey] := true
         if (!this.KeyPresses.Has(ThisHotkey)) {
             this.KeyPresses[ThisHotkey] := {count: 0, timerFn: "", holdTimers: [], consumed: false, clickMatched: false, clickUnmatched: false, repeatTimer: ""}
         }
@@ -472,9 +526,7 @@ class HotkeyEngine {
             return
         }
         ; 物理按键检测兜底：如果键已被松开，主动停掉 repeat
-        cleanKey := RegExReplace(key, "^[\$\~\^\!\+\#\<\>]+", "")
-        ; 对大括号封装的键名去壳 (如 {F10} -> F10)
-        cleanKey := RegExReplace(cleanKey, "^\{([^}]+)\}$", "$1")
+        cleanKey := this.GetPhysicalKey(key)
         if (!GetKeyState(cleanKey, "P")) {
             SetTimer(data.repeatTimer, 0)
             data.repeatTimer := ""
