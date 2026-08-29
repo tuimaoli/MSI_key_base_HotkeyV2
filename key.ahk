@@ -677,7 +677,7 @@ class ActionExecutor {
                     savedClip := ""
                 case "keycombo":
                     SetKeyDelay(50, 50)
-                    SendEvent(KeyUtil.ToAhkKey(cmd))
+                    SendEvent(KeyUtil.ToSendCombo(cmd))
                 case "delay":
                     if (IsInteger(cmd)) {
                         Sleep(Integer(cmd))
@@ -715,6 +715,19 @@ class KeyUtil {
         k := StrReplace(k, "Alt+", "!")
         k := StrReplace(k, "Win+", "#")
         return k
+    }
+
+    static ToSendCombo(readableKey) {
+        ; 将可读组合键转成 Send 可识别的键串，实体键用 {} 包裹，
+        ; 否则 Left/Right/Up/Down 等方向键会被当作纯文本 "Left" 发送
+        ahkKey := this.ToAhkKey(readableKey)
+        modifiers := ""
+        keyName := ahkKey
+        while RegExMatch(keyName, "^([!#\^\+<>])", &match) {
+            modifiers .= match[1]
+            keyName := SubStr(keyName, 2)
+        }
+        return modifiers "{" keyName "}"
     }
 
     static CaptureKey(ctrl, parentGui) {
