@@ -380,14 +380,24 @@ class HotkeyEngine {
         return k
     }
 
+    static IsKeyPhysicallyDown(key) {
+        ; GetKeyState 无法解析的键名（如自定义 SC 码 sc10A）返回 false，防止运行时崩溃
+        try {
+            return GetKeyState(key, "P")
+        } catch {
+            return false
+        }
+    }
+
     static StartRepeatGuard() {
         SetTimer(this.CheckDownState.Bind(this), 30)
     }
 
     static CheckDownState() {
         ; 轮询清除已物理松开的键，供 OnTrigger 判断键盘自动重复
+        ; 无法解析的键名（如 sc10A）视为已松开，避免崩溃并让其恢复原触发行为
         for key, _ in this.DownState {
-            if (!GetKeyState(key, "P")) {
+            if (!this.IsKeyPhysicallyDown(key)) {
                 this.DownState.Delete(key)
             }
         }
@@ -527,7 +537,7 @@ class HotkeyEngine {
         }
         ; 物理按键检测兜底：如果键已被松开，主动停掉 repeat
         cleanKey := this.GetPhysicalKey(key)
-        if (!GetKeyState(cleanKey, "P")) {
+        if (!this.IsKeyPhysicallyDown(cleanKey)) {
             SetTimer(data.repeatTimer, 0)
             data.repeatTimer := ""
             return
