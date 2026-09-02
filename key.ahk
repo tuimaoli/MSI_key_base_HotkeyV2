@@ -905,12 +905,24 @@ class KeyUtil {
 class UIManager {
     static MainGui := ""
     static lvRules := ""
+    static ddlGroupFilter := ""
+    static btnSort := ""
+    static GroupFilter := ""        ; 当前分组筛选 ("" = 全部)
+    static SortByGroup := false      ; 是否按分组排序
+    static RowToRule := []           ; 列表显示行号 → 规则数组索引
 
     static BuildMain() {
         this.MainGui := Gui("+Resize +MinSize800x400", I18n.T("Title"))
         this.MainGui.SetFont("s9", "Segoe UI")
 
-        this.lvRules := this.MainGui.Add("ListView", "x10 y10 w780 h380 Grid Checked", [I18n.T("ColGroup"), I18n.T("ColDesc"), I18n.T("ColKey"), I18n.T("ColTrigger"), I18n.T("ColWindow"), I18n.T("ColCount"), I18n.T("ColHoldTime"), I18n.T("ColActions")])
+        ; --- 顶部工具栏：分组筛选 + 按分组排序 ---
+        this.MainGui.Add("Text", "x10 y12", I18n.T("FilterLabel"))
+        this.ddlGroupFilter := this.MainGui.Add("DropDownList", "x75 y9 w140", [I18n.T("FilterAll")])
+        this.ddlGroupFilter.OnEvent("Change", (*) => this.OnFilterChange())
+        this.btnSort := this.MainGui.Add("Button", "x225 y7 w110", I18n.T("SortByGroup"))
+        this.btnSort.OnEvent("Click", (*) => this.ToggleGroupSort())
+
+        this.lvRules := this.MainGui.Add("ListView", "x10 y38 w780 h350 Grid Checked NoSort", [I18n.T("ColGroup"), I18n.T("ColDesc"), I18n.T("ColKey"), I18n.T("ColTrigger"), I18n.T("ColWindow"), I18n.T("ColCount"), I18n.T("ColHoldTime"), I18n.T("ColActions")])
         
         this.lvRules.ModifyCol(1, 70)
         this.lvRules.ModifyCol(2, 180)
@@ -924,6 +936,8 @@ class UIManager {
         this.lvRules.OnEvent("ItemCheck", this.OnRuleCheck.Bind(this))
         this.lvRules.OnEvent("ContextMenu", this.ShowContextMenu.Bind(this))
         this.lvRules.OnEvent("DoubleClick", this.OnDoubleClick.Bind(this))
+        ; 点击"分组"表头切换按分组排序
+        this.lvRules.OnEvent("ColClick", (ctrl, col) => (col == 1 ? this.ToggleGroupSort() : ""))
 
         this.MainGui.OnEvent("Size", this.OnGuiSize.Bind(this))
         this.MainGui.OnEvent("Close", (*) => this.MainGui.Hide())
@@ -943,7 +957,7 @@ class UIManager {
             return
         }
         try {
-            this.lvRules.Move(10, 10, width - 20, height - 20)
+            this.lvRules.Move(10, 38, width - 20, height - 48)
         }
     }
 
@@ -951,8 +965,62 @@ class UIManager {
         if (!this.lvRules) {
             return
         }
-        this.lvRules.Delete()
+        ; --- 刷新筛选下拉框（保留当前选择） ---
+        if (this.ddlGroupFilter) {
+            this.ddlGroupFilter.Delete()
+            filterList := [I18n.T("FilterAll")]
+            for g in this.GetGroupList() {
+                filterList.Push(g)
+            }
+            this.ddlGroupFilter.Add(filterList)
+            curIdx := 1
+            if (this.GroupFilter != "") {
+                for i, g in filterList {
+                    if (g == this.GroupFilter) {
+                        curIdx := i
+                        break
+                    }
+                }
+            }
+            this.ddlGroupFilter.Choose(curIdx)
+        }
+        ; --- 排序按钮状态 ---
+        if (this.btnSort) {
+            this.btnSort.Text := I18n.T("SortByGroup") . (this.SortByGroup ? " ✓" : "")
+        }
+        ; --- 计算显示集合（筛选 + 排序） ---
+        displayIdx := []
         for i, rule in ConfigManager.Rules {
+            g := rule.Has("group") ? rule["group"] : "Default"
+            if (this.GroupFilter != "" && g != this.GroupFilter) {
+                continue
+            }
+            displayIdx.Push(i)
+        }
+        if (this.SortByGroup && displayIdx.Length > 1) {
+            ; 按分组名稳定插入排序（相同分组保持原顺序）
+            Loop displayIdx.Length - 1 {
+                i := A_Index + 1
+                cur := displayIdx[i]
+                curG := ConfigManager.Rules[cur].Has("group") ? ConfigManager.Rules[cur]["group"] : "Default"
+                j := i - 1
+                while (j >= 1) {
+                    jG := ConfigManager.Rules[displayIdx[j]].Has("group") ? ConfigManager.Rules[displayIdx[j]]["group"] : "Default"
+                    if (StrCompare(jG, curG) <= 0) {
+                        break
+                    }
+                    displayIdx[j + 1] := displayIdx[j]
+                    j--
+                }
+                displayIdx[j + 1] := cur
+            }
+        }
+        ; --- 重建列表 + 行号→规则索引映射 ---
+        this.RowToRule := []
+        this.lvRules.Delete()
+        for pos, idx in displayIdx {
+            rule := ConfigManager.Rules[idx]
+            this.RowToRule.Push(idx)
             g := rule.Has("group") ? rule["group"] : "Default"
             d := rule.Has("desc") ? rule["desc"] : ""
             k := rule.Has("key") ? rule["key"] : "?"
@@ -961,13 +1029,14 @@ class UIManager {
             c := rule.Has("count") ? rule["count"] : "1"
             h := rule.Has("triggerType") && rule["triggerType"] == "longpress" ? (rule.Has("holdTime") ? rule["holdTime"] : "500") : "-"
             a := rule.Has("actions") ? rule["actions"].Length : 0
-            
+
             this.lvRules.Add(rule["enabled"] ? "Check" : "-Check", g, d, k, tt, w, c, h, a " " I18n.T("Actions"))
         }
     }
 
     static OnRuleCheck(ctrl, item, checked) {
-        ConfigManager.Rules[item]["enabled"] := (checked == 1)
+        idx := this.RowToRule.Has(item) ? this.RowToRule[item] : item
+        ConfigManager.Rules[idx]["enabled"] := (checked == 1)
         ConfigManager.Save()
     }
 
@@ -975,20 +1044,63 @@ class UIManager {
         if (item == 0) {
             return
         }
-        this.ShowEditRule(ConfigManager.Rules[item], item)
+        idx := this.RowToRule.Has(item) ? this.RowToRule[item] : item
+        this.ShowEditRule(ConfigManager.Rules[idx], idx)
     }
 
     static ShowContextMenu(ctrl, item, isRightClick, x, y) {
+        ; 收集当前选中行（Ctrl/Shift 多选）
+        selRows := []
+        r := 0
+        while (r := ctrl.GetNext(r)) {
+            selRows.Push(r)
+        }
+        ; 右键落在某行时：该行已在选中集内 → 操作整个选中集，否则仅该行
+        workRows := []
+        if (item > 0) {
+            hit := false
+            for sr in selRows {
+                if (sr == item) {
+                    hit := true
+                    break
+                }
+            }
+            workRows := hit ? selRows : [item]
+        } else {
+            workRows := selRows
+        }
+        ; 显示行号 → 规则索引
+        workIndices := []
+        for row in workRows {
+            if (this.RowToRule.Has(row)) {
+                workIndices.Push(this.RowToRule[row])
+            }
+        }
+
         ctxMenu := Menu()
         ctxMenu.Add(I18n.T("AddRule"), (*) => this.ShowEditRule())
 
-        if (item > 0) {
+        if (workIndices.Length > 0) {
             ctxMenu.Add()
-            ctxMenu.Add(I18n.T("EditRule"), (*) => this.ShowEditRule(ConfigManager.Rules[item], item))
-            ctxMenu.Add(I18n.T("DuplicateRule"), (*) => this.DuplicateRuleCallback(item))
-            ctxMenu.Add(I18n.T("DeleteRule"), (*) => this.DeleteRuleCallback(item))
+            if (workIndices.Length == 1) {
+                ctxMenu.Add(I18n.T("EditRule"), (*) => this.ShowEditRule(ConfigManager.Rules[workIndices[1]], workIndices[1]))
+                ctxMenu.Add(I18n.T("DuplicateRule"), (*) => this.DuplicateRuleCallback(workIndices[1]))
+            }
             ctxMenu.Add()
-            currentGroup := ConfigManager.Rules[item]["group"]
+            ; 迁移到分组子菜单：已有分组 + 新建分组
+            migMenu := Menu()
+            for g in this.GetGroupList() {
+                migMenu.Add(g, this.MigrateToGroup.Bind(this, workIndices, g))
+            }
+            migMenu.Add()
+            migMenu.Add(I18n.T("NewGroup"), (*) => this.PromptNewGroupAndMigrate(workIndices))
+            migLabel := workIndices.Length > 1 ? I18n.T("MigrateSelected") : I18n.T("MigrateRule")
+            ctxMenu.Add(migLabel, migMenu)
+            ctxMenu.Add()
+            delLabel := workIndices.Length > 1 ? (I18n.T("DeleteSelected") " (" workIndices.Length ")") : I18n.T("DeleteRule")
+            ctxMenu.Add(delLabel, (*) => this.DeleteSelectedCallback(workIndices))
+            ctxMenu.Add()
+            currentGroup := ConfigManager.Rules[workIndices[1]]["group"]
             ctxMenu.Add(I18n.T("EnableThisGroup") " [" currentGroup "]", (*) => this.ToggleGroup(currentGroup, true))
             ctxMenu.Add(I18n.T("DisableThisGroup") " [" currentGroup "]", (*) => this.ToggleGroup(currentGroup, false))
         }
@@ -1002,12 +1114,80 @@ class UIManager {
         ConfigManager.Save()
     }
 
-    static DeleteRuleCallback(itemIndex) {
-        result := MsgBox(I18n.T("DeleteConfirm"), I18n.T("DeleteTitle"), 0x4)
-        if (result == "Yes") {
-            ConfigManager.Rules.RemoveAt(itemIndex)
+    static DeleteSelectedCallback(indices) {
+        if (indices.Length == 0) {
+            return
+        }
+        if (indices.Length == 1) {
+            result := MsgBox(I18n.T("DeleteConfirm"), I18n.T("DeleteTitle"), 0x4)
+        } else {
+            result := MsgBox(Format(I18n.T("DeleteMultiConfirm"), indices.Length), I18n.T("DeleteTitle"), 0x4)
+        }
+        if (result != "Yes") {
+            return
+        }
+        ; 从后往前删，避免索引错位
+        Loop indices.Length {
+            ConfigManager.Rules.RemoveAt(indices[indices.Length - A_Index + 1])
+        }
+        ConfigManager.Save()
+    }
+
+    static MigrateToGroup(indices, targetGroup, *) {
+        if (targetGroup = "") {
+            return
+        }
+        changed := false
+        for idx in indices {
+            if (ConfigManager.Rules.Has(idx)) {
+                if (ConfigManager.Rules[idx]["group"] != targetGroup) {
+                    ConfigManager.Rules[idx]["group"] := targetGroup
+                    changed := true
+                }
+            }
+        }
+        if (changed) {
             ConfigManager.Save()
         }
+    }
+
+    static PromptNewGroupAndMigrate(indices) {
+        input := InputBox(I18n.T("NewGroupPrompt"), I18n.T("NewGroup"))
+        if (input.Result != "OK") {
+            return
+        }
+        gName := Trim(input.Value)
+        if (gName = "") {
+            return
+        }
+        this.MigrateToGroup(indices, gName)
+    }
+
+    static GetGroupList() {
+        seen := Map()
+        list := []
+        for rule in ConfigManager.Rules {
+            g := (rule.Has("group") && rule["group"] != "") ? rule["group"] : "Default"
+            if (!seen.Has(g)) {
+                seen[g] := true
+                list.Push(g)
+            }
+        }
+        return list
+    }
+
+    static OnFilterChange() {
+        if (!this.ddlGroupFilter) {
+            return
+        }
+        sel := this.ddlGroupFilter.Text
+        this.GroupFilter := (sel == I18n.T("FilterAll")) ? "" : sel
+        this.UpdateMainListView()
+    }
+
+    static ToggleGroupSort() {
+        this.SortByGroup := !this.SortByGroup
+        this.UpdateMainListView()
     }
 
     static ToggleGroup(targetGroup, state) {
@@ -1517,7 +1697,7 @@ class LogManager {
 class I18n {
     static Dict := Map(
         "en", Map(
-            "Title", "Hotkey Manager V2.5 (Pro)",
+            "Title", "Hotkey Manager V2.6 (Pro)",
             "AddRule", "Add Rule", "EditRule", "Edit Rule", "DuplicateRule", "Duplicate Rule", "DeleteRule", "Delete Rule",
             "Startup", "Run at startup", "LangSwitch", "中文 / English",
             "ColGroup", "Group", "ColDesc", "Description", "ColKey", "Key", "ColWindow", "Window",
@@ -1544,6 +1724,11 @@ class I18n {
             "CaptureModeTitle", "--- Window Capture Mode ---",
             "CaptureModeHover", "Target: ",
             "EnableThisGroup", "Enable Group", "DisableThisGroup", "Disable Group",
+            "FilterLabel", "Filter:", "FilterAll", "All",
+            "SortByGroup", "Sort by Group",
+            "MigrateRule", "Move to Group", "MigrateSelected", "Move Selected to Group",
+            "NewGroup", "New Group...", "NewGroupPrompt", "Enter the new group name:",
+            "DeleteSelected", "Delete Selected", "DeleteMultiConfirm", "Delete the selected {1} rules?",
             "ExportConfig", "Export Config", "ImportConfig", "Import Config",
             "ExportTitle", "Export Config", "ImportTitle", "Import Config",
             "ExportSuccess", "Config exported to:", "ExportFail", "Export failed:",
@@ -1568,7 +1753,7 @@ class I18n {
             "DeleteTitle", "Delete Rule"
         ),
         "zh", Map(
-            "Title", "快捷键管理器 V2.5 (极简版)",
+            "Title", "快捷键管理器 V2.6 (极简版)",
             "AddRule", "添加规则", "EditRule", "编辑当前规则", "DuplicateRule", "复制规则", "DeleteRule", "删除当前规则",
             "Startup", "开机自启", "LangSwitch", "English / 中文",
             "ColGroup", "分组", "ColDesc", "动作描述", "ColKey", "触发按键", "ColWindow", "目标窗口",
@@ -1595,6 +1780,11 @@ class I18n {
             "CaptureModeTitle", "【 窗口捕获模式 】`n[左键] 选定目标`n[右键 / Esc] 取消捕获`n",
             "CaptureModeHover", "当前指向: ",
             "EnableThisGroup", "使能当前分组", "DisableThisGroup", "失能当前分组",
+            "FilterLabel", "分组筛选:", "FilterAll", "全部",
+            "SortByGroup", "按分组排序",
+            "MigrateRule", "迁移到分组", "MigrateSelected", "迁移所选规则到分组",
+            "NewGroup", "新建分组...", "NewGroupPrompt", "请输入新分组名称：",
+            "DeleteSelected", "删除所选规则", "DeleteMultiConfirm", "确定删除所选 {1} 条规则？",
             "ExportConfig", "导出配置", "ImportConfig", "导入配置",
             "ExportTitle", "导出配置", "ImportTitle", "导入配置",
             "ExportSuccess", "配置已导出到:", "ExportFail", "导出失败:",
