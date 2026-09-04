@@ -1955,7 +1955,7 @@ class LogManager {
 class I18n {
     static Dict := Map(
         "en", Map(
-            "Title", "Hotkey Manager V2.7 (Pro)",
+            "Title", "Hotkey Manager V3.0 (Pro)",
             "AddRule", "Add Rule", "EditRule", "Edit Rule", "DuplicateRule", "Duplicate Rule", "DeleteRule", "Delete Rule",
             "Startup", "Run at startup", "LangSwitch", "中文 / English",
             "ColGroup", "Group", "ColDesc", "Description", "ColKey", "Key", "ColWindow", "Window",
@@ -2017,7 +2017,7 @@ class I18n {
             "DonatePlaceholder", "(Donation QR not embedded yet: convert your image via the QR encoder tool and replace GetDonateQR)"
         ),
         "zh", Map(
-            "Title", "快捷键管理器 V2.7 (极简版)",
+            "Title", "快捷键管理器 V3.0 (极简版)",
             "AddRule", "添加规则", "EditRule", "编辑当前规则", "DuplicateRule", "复制规则", "DeleteRule", "删除当前规则",
             "Startup", "开机自启", "LangSwitch", "English / 中文",
             "ColGroup", "分组", "ColDesc", "动作描述", "ColKey", "触发按键", "ColWindow", "目标窗口",
