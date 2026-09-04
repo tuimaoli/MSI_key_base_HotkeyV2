@@ -48,6 +48,8 @@ class AppCore {
         A_TrayMenu.Add(I18n.T("LogClear"), (*) => LogManager.Clear())
         A_TrayMenu.Add(I18n.T("LogSettings"), (*) => LogManager.ShowSettings())
         A_TrayMenu.Add() ; 分隔线
+        A_TrayMenu.Add(I18n.T("About"), (*) => UIManager.ShowAbout())
+        A_TrayMenu.Add() ; 分隔线
         A_TrayMenu.Add(I18n.T("TrayPause"), (*) => this.ToggleSuspend())
         A_TrayMenu.Add(I18n.T("TrayExit"), (*) => ExitApp())
         
@@ -151,6 +153,9 @@ class ConfigManager {
         }
         if (!rule.Has("window")) {
             rule["window"] := ""
+        }
+        if (!rule.Has("cycle")) {
+            rule["cycle"] := []
         }
         return rule
     }
@@ -515,7 +520,14 @@ class HotkeyEngine {
             SetTimer(data.timerFn, 0)
             data.timerFn := ""
         }
-        ActionExecutor.Execute(rule)
+        ; [轮换] 长按触发：执行当前组并推进；本轮组号暂存供连发重复
+        if (ActionExecutor.IsCycle(rule)) {
+            data.cycleIdx := CycleManager.GetGroup(rule)
+            ActionExecutor.ExecuteCycleGroup(rule, data.cycleIdx)
+            CycleManager.Advance(rule)
+        } else {
+            ActionExecutor.Execute(rule)
+        }
         
         ; 长按连发：如果配置了 repeatInterval > 0，启动重复计时器
         repeatInterval := rule.Has("repeatInterval") ? rule["repeatInterval"] : 0
@@ -542,7 +554,12 @@ class HotkeyEngine {
             data.repeatTimer := ""
             return
         }
-        ActionExecutor.Execute(rule)
+        ; [轮换] 连发期间重复本次触发组，不推进指针
+        if (data.HasOwnProp("cycleIdx")) {
+            ActionExecutor.RepeatExecute(rule, data.cycleIdx)
+        } else {
+            ActionExecutor.Execute(rule)
+        }
     }
 
     static OnKeyUp(ThisHotkey) {
@@ -694,22 +711,90 @@ class HotkeyEngine {
 }
 
 ; ==============================================================================
+; CYCLE ROTATION STATE (轮换触发状态机)
+; ==============================================================================
+class CycleManager {
+    static State := Map()
+
+    ; 当前应执行第几组（0 起）；组数变小也不会越界
+    static GetGroup(rule) {
+        n := rule.Has("cycle") ? rule["cycle"].Length : 0
+        if (n <= 1) {
+            return 0
+        }
+        return Mod(this.State.Has(rule) ? this.State[rule] : 0, n)
+    }
+
+    ; 执行后推进指针（取余回绕）
+    static Advance(rule) {
+        n := rule.Has("cycle") ? rule["cycle"].Length : 0
+        if (n <= 1) {
+            return
+        }
+        this.State[rule] := Mod((this.State.Has(rule) ? this.State[rule] : 0) + 1, n)
+    }
+}
+
+; ==============================================================================
 ; ACTION DISPATCHER & EXECUTOR
 ; ==============================================================================
 class ActionExecutor {
+    static IsCycle(rule) {
+        return rule.Has("cycle") && IsObject(rule["cycle"]) && rule["cycle"].Length > 0
+    }
+
+    ; 触发入口（点击匹配 / 长按触发）
     static Execute(rule) {
+        ; [轮换] 多组动作：执行当前组后自动推进指针
+        if (this.IsCycle(rule)) {
+            idx := CycleManager.GetGroup(rule)
+            this.ExecuteCycleGroup(rule, idx)
+            CycleManager.Advance(rule)
+            return
+        }
         if (!rule.Has("actions")) {
             return
         }
-
         displayStr := (rule.Has("desc") && rule["desc"] != "") ? rule["desc"] : rule["key"]
+        this.RunActions(rule["actions"], displayStr, rule["key"])
+    }
+
+    ; 连发重复：轮换规则重复"本次触发组"不推进；普通规则等同 Execute
+    static RepeatExecute(rule, groupIdx := -1) {
+        if (this.IsCycle(rule)) {
+            idx := (groupIdx >= 0) ? groupIdx : CycleManager.GetGroup(rule)
+            this.ExecuteCycleGroup(rule, idx)
+            return
+        }
+        this.Execute(rule)
+    }
+
+    ; 执行轮换规则的第 idx 组（0 起）；组数运行时变化时取余防御
+    static ExecuteCycleGroup(rule, idx) {
+        cycleList := rule["cycle"]
+        n := cycleList.Length
+        if (n == 0) {
+            return
+        }
+        gIdx := Mod(idx, n)
+        group := cycleList[gIdx + 1]
+        if (!group.Has("actions")) {
+            return
+        }
+        base := (rule.Has("desc") && rule["desc"] != "") ? rule["desc"] : rule["key"]
+        gDesc := (group.Has("desc") && group["desc"] != "") ? group["desc"] : base
+        this.RunActions(group["actions"], Format("[{1}/{2}] {3}", gIdx + 1, n, gDesc), rule["key"])
+    }
+
+    ; 共享执行体：ToolTip 提示 + 执行日志 + 动作分发
+    static RunActions(actions, displayStr, ruleKey) {
         ToolTip(I18n.T("ExecFeedback") displayStr " ...")
         SetTimer(() => ToolTip(), -1500)
-        
-        ; 写入执行日志
-        LogManager.Write(displayStr, rule["key"], rule["actions"])
 
-        for action in rule["actions"] {
+        ; 写入执行日志
+        LogManager.Write(displayStr, ruleKey, actions)
+
+        for action in actions {
             if (!action.Has("type") || !action.Has("command")) {
                 continue
             }
@@ -910,6 +995,9 @@ class UIManager {
     static GroupFilter := ""        ; 当前分组筛选 ("" = 全部)
     static SortByGroup := false      ; 是否按分组排序
     static RowToRule := []           ; 列表显示行号 → 规则数组索引
+    ; 赞赏二维码图片数据（Base64，随 exe 编译写死、运行期解码显示，外部无法替换）。
+    ; 制作流程：用仓库根目录 二维码转码.html 选择你的赞赏码图片 → 复制生成的代码 → 替换下面这一行。
+    static DonateQR := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
     static BuildMain() {
         this.MainGui := Gui("+Resize +MinSize800x400", I18n.T("Title"))
@@ -1028,9 +1116,9 @@ class UIManager {
             w := rule.Has("window") && rule["window"] != "" ? rule["window"] : I18n.T("GlobalWindow")
             c := rule.Has("count") ? rule["count"] : "1"
             h := rule.Has("triggerType") && rule["triggerType"] == "longpress" ? (rule.Has("holdTime") ? rule["holdTime"] : "500") : "-"
-            a := rule.Has("actions") ? rule["actions"].Length : 0
+            a := ActionExecutor.IsCycle(rule) ? (I18n.T("CycleShort") "×" rule["cycle"].Length) : ((rule.Has("actions") ? rule["actions"].Length : 0) " " I18n.T("Actions"))
 
-            this.lvRules.Add(rule["enabled"] ? "Check" : "-Check", g, d, k, tt, w, c, h, a " " I18n.T("Actions"))
+            this.lvRules.Add(rule["enabled"] ? "Check" : "-Check", g, d, k, tt, w, c, h, a)
         }
     }
 
@@ -1281,6 +1369,52 @@ class UIManager {
         pgGui.Show("AutoSize")
     }
 
+    ; ============================================================
+    ; 关于窗口 & 赞赏二维码（二维码数据写死在 DonateQR，不可被外部文件替换）
+    ; ============================================================
+    static ShowAbout() {
+        aboutGui := Gui("+Owner", I18n.T("AboutTitle"))
+        aboutGui.SetFont("s10", "Segoe UI")
+        CleanQR() {
+            try FileDelete(A_Temp "\HotkeyDonateQR.png")
+        }
+        aboutGui.OnEvent("Close", (*) => (CleanQR(), aboutGui.Destroy()))
+        aboutGui.OnEvent("Escape", (*) => (CleanQR(), aboutGui.Destroy()))
+
+        aboutGui.Add("Text", "x20 y14 w340 Center", I18n.T("Title"))
+        aboutGui.Add("Text", "x20 y40 w340 Center cGray", "AutoHotkey " A_AhkVersion)
+
+        ; 占位数据（1x1 像素）长度不足 120 → 判定未嵌入真图，显示占位文案
+        qrReady := StrLen(this.DonateQR) > 120
+        if (qrReady) {
+            tmpQR := A_Temp "\HotkeyDonateQR.png"
+            if (this.Base64ToFile(this.DonateQR, tmpQR)) {
+                aboutGui.Add("Picture", "x90 y70 w240", tmpQR)
+            } else {
+                qrReady := false
+            }
+        }
+        if (!qrReady) {
+            aboutGui.Add("Text", "x20 y80 w340 Center cGray", I18n.T("DonatePlaceholder"))
+        }
+        aboutGui.Add("Text", "x20 y340 w340 Center", I18n.T("DonateTip"))
+        aboutGui.Show("AutoSize")
+    }
+
+    static Base64ToFile(b64, filePath) {
+        size := 0
+        DllCall("crypt32.dll\CryptStringToBinary", "Ptr", StrPtr(b64), "UInt", 0, "UInt", 1, "Ptr", 0, "UInt*", &size, "Ptr", 0, "Ptr", 0)
+        if (size <= 0) {
+            return false
+        }
+        buf := Buffer.Alloc(size)
+        DllCall("crypt32.dll\CryptStringToBinary", "Ptr", StrPtr(b64), "UInt", 0, "UInt", 1, "Ptr", buf, "UInt*", &size, "Ptr", 0, "Ptr", 0)
+        f := FileOpen(filePath, "w")
+        f.RawWrite(buf, size)
+        f.Close()
+        return true
+    }
+
     static ShowEditRule(existingRule := "", ruleIndex := 0) {
         ; 从托盘创建新规则时，先呼出主窗口（避免修改窗口孤悬）
         if (!existingRule) {
@@ -1406,36 +1540,117 @@ class UIManager {
             xPos += 36
         }
 
-        editGui.Add("GroupBox", "x15 y300 w590 h320", I18n.T("ActGroup"))
+        editGui.Add("GroupBox", "x15 y300 w590 h360", I18n.T("ActGroup"))
+
+        ; --- 轮换触发开关：多组动作按触发次数循环切换 ---
+        cbCycle := editGui.Add("CheckBox", "x30 y312 w560", I18n.T("EnableCycle"))
+        ; --- 轮换组管理行（启用轮换后可见） ---
+        txtCycleLabel := editGui.Add("Text", "x30 y346 w65", I18n.T("CycleGroupLabel"))
+        ddlCycle := editGui.Add("DropDownList", "x95 y343 w150")
+        btnAddCycle := editGui.Add("Button", "x255 y342 w70", I18n.T("CycleAddGroup"))
+        btnDelCycle := editGui.Add("Button", "x330 y342 w70", I18n.T("CycleDelGroup"))
         
         typeMap := ["Run", "URL", "CMD", "Send", "Paste", "KeyCombo", "Delay", "LockScreen", "Sleep", "Shutdown"]
         displayTypes := []
         for t in typeMap {
             displayTypes.Push(I18n.T("Act_" t))
         }
-        editGui.Add("Text", "x30 y330 w75", I18n.T("TypeLabel"))
-        ddlType := editGui.Add("DropDownList", "x105 y327 w140 Choose1", displayTypes)
+        editGui.Add("Text", "x30 y378 w75", I18n.T("TypeLabel"))
+        ddlType := editGui.Add("DropDownList", "x105 y375 w140 Choose1", displayTypes)
         
-        editGui.Add("Text", "x265 y330 w75", I18n.T("CmdLabel")) 
-        edCommand := editGui.Add("Edit", "x340 y327 w155", "")
-        btnCaptureCmd := editGui.Add("Button", "x505 y326 w80", I18n.T("BtnCaptureCmd"))
+        editGui.Add("Text", "x265 y378 w75", I18n.T("CmdLabel")) 
+        edCommand := editGui.Add("Edit", "x340 y375 w155", "")
+        btnCaptureCmd := editGui.Add("Button", "x505 y374 w80", I18n.T("BtnCaptureCmd"))
         btnCaptureCmd.OnEvent("Click", (*) => KeyUtil.CaptureKey(edCommand, editGui))
 
-        btnAddAction := editGui.Add("Button", "x385 y365 w65", I18n.T("BtnAdd"))
-        btnUpdateAction := editGui.Add("Button", "x455 y365 w65", I18n.T("BtnUpdate"))
-        btnDelAction := editGui.Add("Button", "x525 y365 w65", I18n.T("BtnDelete"))
+        btnAddAction := editGui.Add("Button", "x385 y413 w65", I18n.T("BtnAdd"))
+        btnUpdateAction := editGui.Add("Button", "x455 y413 w65", I18n.T("BtnUpdate"))
+        btnDelAction := editGui.Add("Button", "x525 y413 w65", I18n.T("BtnDelete"))
         
-        lvActions := editGui.Add("ListView", "x30 y400 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
+        lvActions := editGui.Add("ListView", "x30 y448 w560 h200 Grid", [I18n.T("TypeLabel"), I18n.T("CmdLabel")])
         lvActions.ModifyCol(1, 140)
         lvActions.ModifyCol(2, 395)
 
-        tempActions := []
-        if (existingRule && existingRule.Has("actions")) {
-            for act in existingRule["actions"] {
+        ; --- 动作组数据模型（支持轮换多组；未启用轮换时仅组1生效） ---
+        cycleMode := (existingRule && ActionExecutor.IsCycle(existingRule))
+        tempGroups := []
+        if (cycleMode) {
+            for cg in existingRule["cycle"] {
+                acts := []
+                if (cg.Has("actions")) {
+                    for act in cg["actions"] {
+                        acts.Push(act.Clone())
+                    }
+                }
+                tempGroups.Push(Map("desc", cg.Has("desc") ? cg["desc"] : "", "actions", acts))
+            }
+        } else {
+            acts := []
+            if (existingRule && existingRule.Has("actions")) {
+                for act in existingRule["actions"] {
+                    acts.Push(act.Clone())
+                }
+            }
+            tempGroups.Push(Map("desc", "", "actions", acts))
+        }
+        curGroup := 1
+        GetCurActions() {
+            return tempGroups[curGroup]["actions"]
+        }
+        CycleLoadActions() {
+            lvActions.Delete()
+            for act in GetCurActions() {
                 lvActions.Add(, I18n.T("Act_" act["type"]), act["command"])
-                tempActions.Push(act.Clone())
             }
         }
+        CycleRefreshDDL() {
+            ddlCycle.Delete()
+            items := []
+            for i, g in tempGroups {
+                items.Push(I18n.T("CycleGroup") " " i)
+            }
+            ddlCycle.Add(items)
+            ddlCycle.Choose(curGroup)
+        }
+        CycleSwitch() {
+            sel := ddlCycle.Value
+            if (sel >= 1 && sel <= tempGroups.Length) {
+                curGroup := sel
+            }
+            CycleLoadActions()
+        }
+        CycleAddGroup() {
+            tempGroups.Push(Map("desc", "", "actions", []))
+            curGroup := tempGroups.Length
+            CycleRefreshDDL()
+            CycleLoadActions()
+        }
+        CycleDelGroup() {
+            if (tempGroups.Length <= 1) {
+                return
+            }
+            tempGroups.RemoveAt(curGroup)
+            if (curGroup > tempGroups.Length) {
+                curGroup := tempGroups.Length
+            }
+            CycleRefreshDDL()
+            CycleLoadActions()
+        }
+        UpdateCycleVisibility() {
+            isCy := cbCycle.Value
+            txtCycleLabel.Visible := isCy
+            ddlCycle.Visible := isCy
+            btnAddCycle.Visible := isCy
+            btnDelCycle.Visible := isCy
+        }
+        cbCycle.Value := cycleMode ? 1 : 0
+        cbCycle.OnEvent("Click", (*) => UpdateCycleVisibility())
+        ddlCycle.OnEvent("Change", (*) => CycleSwitch())
+        btnAddCycle.OnEvent("Click", (*) => CycleAddGroup())
+        btnDelCycle.OnEvent("Click", (*) => CycleDelGroup())
+        UpdateCycleVisibility()
+        CycleRefreshDDL()
+        CycleLoadActions()
 
         GetActualType() {
             selText := ddlType.Text
@@ -1456,20 +1671,21 @@ class UIManager {
                 return
             }
             lvActions.Add(, I18n.T("Act_" t), c)
-            tempActions.Push(Map("type", t, "command", c))
+            GetCurActions().Push(Map("type", t, "command", c))
             edCommand.Value := ""
         }
         
         lvActions.OnEvent("ItemSelect", OnActionSelect)
         OnActionSelect(ctrl, item, selected) {
-            if (selected && item > 0 && item <= tempActions.Length) {
-                targetType := tempActions[item]["type"]
+            acts := GetCurActions()
+            if (selected && item > 0 && item <= acts.Length) {
+                targetType := acts[item]["type"]
                 for idx, val in typeMap {
                     if (val = targetType || val = StrTitle(targetType)) {
                         ddlType.Choose(idx)
                     }
                 }
-                edCommand.Value := tempActions[item]["command"]
+                edCommand.Value := acts[item]["command"]
             }
         }
 
@@ -1487,7 +1703,7 @@ class UIManager {
                 return
             }
             lvActions.Modify(row, , I18n.T("Act_" t), c)
-            tempActions[row] := Map("type", t, "command", c)
+            GetCurActions()[row] := Map("type", t, "command", c)
         }
 
         btnDelAction.OnEvent("Click", (*) => DeleteActionFromUI())
@@ -1497,11 +1713,11 @@ class UIManager {
                 return
             }
             lvActions.Delete(row)
-            tempActions.RemoveAt(row)
+            GetCurActions().RemoveAt(row)
         }
 
-        btnSave := editGui.Add("Button", "x200 y640 w100 h35", I18n.T("BtnSave"))
-        btnCancel := editGui.Add("Button", "x320 y640 w100 h35", I18n.T("BtnCancel"))
+        btnSave := editGui.Add("Button", "x200 y705 w100 h35", I18n.T("BtnSave"))
+        btnCancel := editGui.Add("Button", "x320 y705 w100 h35", I18n.T("BtnCancel"))
 
         btnSave.OnEvent("Click", (*) => SaveTheRule())
         btnCancel.OnEvent("Click", (*) => (RestoreState(), editGui.Destroy()))
@@ -1538,7 +1754,12 @@ class UIManager {
                 }
             }
             newRule["days"] := (dayStr == "1,2,3,4,5,6,7") ? "" : dayStr
-            newRule["actions"] := tempActions
+            ; [轮换] 启用轮换 → 写 cycle 组列表；否则写单组 actions（互斥字段）
+            if (cbCycle.Value) {
+                newRule["cycle"] := tempGroups
+            } else {
+                newRule["actions"] := GetCurActions()
+            }
 
             if (ruleIndex > 0) {
                 ConfigManager.Rules[ruleIndex] := newRule
@@ -1697,7 +1918,7 @@ class LogManager {
 class I18n {
     static Dict := Map(
         "en", Map(
-            "Title", "Hotkey Manager V2.6 (Pro)",
+            "Title", "Hotkey Manager V2.7 (Pro)",
             "AddRule", "Add Rule", "EditRule", "Edit Rule", "DuplicateRule", "Duplicate Rule", "DeleteRule", "Delete Rule",
             "Startup", "Run at startup", "LangSwitch", "中文 / English",
             "ColGroup", "Group", "ColDesc", "Description", "ColKey", "Key", "ColWindow", "Window",
@@ -1750,10 +1971,16 @@ class I18n {
             "ShutdownConfirm", "Are you sure you want to shutdown?",
             "ShutdownTitle", "Shutdown",
             "DeleteConfirm", "Delete this rule?",
-            "DeleteTitle", "Delete Rule"
+            "DeleteTitle", "Delete Rule",
+            "CycleShort", "Cycle", "EnableCycle", "Cycle Mode: multiple action groups, advance on each trigger",
+            "CycleGroupLabel", "Group:", "CycleGroup", "Group",
+            "CycleAddGroup", "Add Group", "CycleDelGroup", "Remove Group",
+            "About", "About", "AboutTitle", "About",
+            "DonateTip", "If you find this tool helpful, scan to support the developer :)",
+            "DonatePlaceholder", "(Donation QR not embedded yet: convert your image via the QR encoder tool and replace DonateQR)"
         ),
         "zh", Map(
-            "Title", "快捷键管理器 V2.6 (极简版)",
+            "Title", "快捷键管理器 V2.7 (极简版)",
             "AddRule", "添加规则", "EditRule", "编辑当前规则", "DuplicateRule", "复制规则", "DeleteRule", "删除当前规则",
             "Startup", "开机自启", "LangSwitch", "English / 中文",
             "ColGroup", "分组", "ColDesc", "动作描述", "ColKey", "触发按键", "ColWindow", "目标窗口",
@@ -1806,7 +2033,13 @@ class I18n {
             "ShutdownConfirm", "确定要关机吗？",
             "ShutdownTitle", "关机确认",
             "DeleteConfirm", "确定删除此规则？",
-            "DeleteTitle", "删除确认"
+            "DeleteTitle", "删除确认",
+            "CycleShort", "轮换", "EnableCycle", "轮换触发：多组动作按触发次数循环切换",
+            "CycleGroupLabel", "轮换组:", "CycleGroup", "组",
+            "CycleAddGroup", "加组", "CycleDelGroup", "删组",
+            "About", "关于", "AboutTitle", "关于",
+            "DonateTip", "如果这个工具帮到了你，扫码支持一下作者吧~",
+            "DonatePlaceholder", "（赞赏码尚未嵌入：用 二维码转码.html 生成 Base64 后替换 key.ahk 中的 DonateQR）"
         )
     )
 

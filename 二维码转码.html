@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>赞赏二维码 → Base64 转码工具（用于 key.ahk 的 DonateQR）</title>
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; }
+  pre { background: #f4f4f4; border: 1px solid #ddd; padding: 10px; white-space: pre-wrap; word-break: break-all; max-height: 360px; overflow: auto; font-size: 12px; }
+  button { margin: 8px 4px 0 0; padding: 6px 18px; }
+  .tip { color: #666; font-size: 13px; }
+</style>
+</head>
+<body>
+<h2>赞赏二维码 → Base64 转码</h2>
+<p>选择你的赞赏码/收款码图片（png/jpg），自动生成 <code>key.ahk</code> 中 <code>DonateQR</code> 常量的替换代码并复制到剪贴板。</p>
+<input type="file" id="f" accept="image/*">
+<div id="out"></div>
+
+<p class="tip">说明：二维码数据写死在代码里，随 exe 编译分发；运行时解码到临时目录显示、关窗即删，外部无法替换图片。建议用 400×400 左右的正方形图片，体积控制在 200KB 以内。</p>
+
+<script>
+document.getElementById('f').addEventListener('change', function (e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    const b64 = reader.result.split(',')[1];
+    // 每行 88 字符分段，输出多行括号块（key.ahk 中 DonateQR 的替换格式）
+    const seg = [];
+    for (let i = 0; i < b64.length; i += 88) seg.push('    "' + b64.slice(i, i + 88) + '"');
+    const code = '    static DonateQR := (\n' + seg.join('\n') + '\n    )';
+    window._code = code;
+    document.getElementById('out').innerHTML =
+      '<h3>生成完成（' + (file.size / 1024).toFixed(1) + ' KB）— 替换 key.ahk 中 UIManager 的 DonateQR 两行注释之下的那行即可</h3>' +
+      '<pre id="code"></pre><button onclick="copyCode()">复制代码</button>' +
+      '<span class="tip"> 粘贴到 key.ahk 后保存，重启脚本生效。占位检测：数据超过 120 字符即视为已嵌入真图。</span>';
+    document.getElementById('code').textContent = code;
+  };
+  reader.readAsDataURL(file);
+});
+function copyCode() {
+  navigator.clipboard.writeText(window._code).then(function () {
+    alert('已复制，去 key.ahk 替换吧');
+  });
+}
+</script>
+</body>
+</html>
